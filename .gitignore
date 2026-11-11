@@ -3,3 +3,4 @@ target/
 *.oiplugin
 dist/
 rakmaster.key
+.openidea/
