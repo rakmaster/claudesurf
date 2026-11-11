@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude</title>
+<style>
+  :root {
+    --bg: var(--openidea-bg, #1e1f22);
+    --bg2: var(--openidea-bg-elevated, #2b2d30);
+    --hover: var(--openidea-bg-hover, rgba(127,127,127,.12));
+    --input: var(--openidea-bg-input, transparent);
+    --fg: var(--openidea-fg, #dfe1e5);
+    --strong: var(--openidea-fg-strong, var(--fg));
+    --muted: var(--openidea-fg-muted, #868a91);
+    --border: var(--openidea-border, rgba(127,127,127,.3));
+    --accent: var(--openidea-accent, #d97757);
+    --on-accent: var(--openidea-fg-on-accent, #fff);
+    --link: var(--openidea-link, #589df6);
+    --danger: var(--openidea-danger, #e5534b);
+    --warning: var(--openidea-warning, #d29922);
+    --success: var(--openidea-success, #57ab5a);
+    --mono: var(--openidea-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    --ui: var(--openidea-font-ui, system-ui, -apple-system, sans-serif);
+    --size: var(--openidea-font-size, 13px);
+    --claude: #d97757;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column; overflow: hidden;
+    font: var(--size)/1.5 var(--ui); color: var(--fg); background: transparent;
+  }
+  button { font: inherit; color: inherit; }
+
+  /* Header */
+  .top { display: flex; align-items: center; gap: 6px; padding: 4px 8px; padding-right: calc(8px + var(--openidea-corner-inset-width, 0px)); border-bottom: 1px solid var(--border); min-height: var(--openidea-corner-inset-height, 34px); }
+  .top .title { font-weight: 600; color: var(--strong); display: flex; align-items: center; gap: 6px; }
+  .top .spacer { flex: 1; }
+  .icon-btn { background: none; border: 0; padding: 3px 6px; border-radius: 4px; cursor: pointer; color: var(--muted); }
+  .icon-btn:hover { background: var(--hover); color: var(--fg); }
+  .spark { width: 14px; height: 14px; color: var(--claude); }
+
+  /* Messages */
+  #log { flex: 1; overflow-y: auto; padding: 10px 10px 4px; scroll-behavior: auto; }
+  .empty { color: var(--muted); text-align: center; margin-top: 18vh; padding: 0 16px; }
+  .empty .spark { width: 30px; height: 30px; }
+  .empty h2 { color: var(--strong); font-size: 1.15em; margin: 8px 0 4px; }
+  .suggest { display: flex; flex-direction: column; gap: 6px; margin: 14px auto 0; max-width: 320px; }
+  .suggest button { text-align: left; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  .suggest button:hover { border-color: var(--accent); }
+
+  .msg { margin: 0 0 12px; }
+  .msg.user { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; white-space: pre-wrap; word-wrap: break-word; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; font: 0.85em var(--mono); color: var(--muted); background: var(--hover); border-radius: 4px; padding: 0 6px; margin-bottom: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg.assistant { word-wrap: break-word; }
+  .msg.assistant > :first-child { margin-top: 0; }
+  .msg.assistant > :last-child { margin-bottom: 0; }
+  .msg.assistant p { margin: 0 0 8px; }
+  .msg.assistant h1, .msg.assistant h2, .msg.assistant h3, .msg.assistant h4 { color: var(--strong); margin: 12px 0 6px; font-size: 1.05em; }
+  .msg.assistant h1 { font-size: 1.2em; }
+  .msg.assistant ul, .msg.assistant ol { margin: 0 0 8px; padding-left: 20px; }
+  .msg.assistant blockquote { margin: 0 0 8px; padding-left: 10px; border-left: 3px solid var(--border); color: var(--muted); }
+  .msg.assistant a { color: var(--link); }
+  .msg.assistant hr { border: 0; border-top: 1px solid var(--border); }
+  .msg.assistant table { border-collapse: collapse; margin: 0 0 8px; font-size: .95em; }
+  .msg.assistant th, .msg.assistant td { border: 1px solid var(--border); padding: 2px 6px; }
+  code { font-family: var(--mono); font-size: .92em; background: var(--hover); padding: 0 4px; border-radius: 3px; }
+  .file-link { color: var(--link); cursor: pointer; }
+  .file-link:hover { text-decoration: underline; }
+  .code { position: relative; margin: 0 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); }
+  .code .bar { display: flex; justify-content: space-between; align-items: center; padding: 1px 4px 1px 8px; font-size: .8em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .code pre { margin: 0; padding: 8px; overflow-x: auto; font: .92em/1.45 var(--mono); }
+  .code pre code { background: none; padding: 0; }
+  .cursor::after { content: "▍"; color: var(--claude); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* Tool cards */
+  .tool { margin: 0 0 6px; border: 1px solid var(--border); border-radius: 6px; font-size: .92em; }
+  .tool.sub { margin-left: 14px; opacity: .85; }
+  .tool summary { list-style: none; display: flex; gap: 6px; align-items: center; padding: 3px 8px; cursor: pointer; }
+  .tool summary::-webkit-details-marker { display: none; }
+  .tool summary:hover { background: var(--hover); }
+  .tool .name { font-weight: 600; color: var(--strong); flex: none; }
+  .tool .ttl { font-family: var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .tool .st { flex: none; width: 14px; text-align: center; }
+  .tool .st.run { color: var(--muted); animation: spin 1s linear infinite; }
+  .tool .st.ok { color: var(--success); }
+  .tool .st.err { color: var(--danger); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .tool pre { margin: 0; padding: 6px 8px; border-top: 1px solid var(--border); max-height: 260px; overflow: auto; font: .9em/1.4 var(--mono); white-space: pre-wrap; word-break: break-word; }
+  .tool pre .add { color: var(--success); }
+  .tool pre .del { color: var(--danger); }
+
+  .note { font-size: .88em; color: var(--muted); margin: 0 0 12px; }
+  .note.error { color: var(--danger); white-space: pre-wrap; }
+  .note.warn { color: var(--warning); }
+  .note button { background: none; border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; cursor: pointer; margin-left: 4px; color: var(--fg); }
+  .status { font-size: .88em; color: var(--muted); padding: 0 12px 4px; min-height: 1.5em; display: flex; align-items: center; gap: 6px; }
+  .dots::after { content: ""; animation: dots 1.2s steps(4) infinite; }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+
+  /* Composer */
+  .composer { margin: 0 8px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--input); }
+  .composer:focus-within { border-color: var(--openidea-focus-ring, var(--accent)); }
+  .ctxrow { display: flex; align-items: center; gap: 6px; padding: 6px 8px 0; flex-wrap: wrap; }
+  .ctx { display: inline-flex; align-items: center; gap: 4px; font: .85em var(--mono); border: 1px solid var(--border); border-radius: 4px; padding: 0 2px 0 6px; max-width: 100%; }
+  .ctx.off { opacity: .45; text-decoration: line-through; }
+  .ctx span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ctx button { background: none; border: 0; cursor: pointer; color: var(--muted); padding: 0 3px; }
+  textarea {
+    display: block; width: 100%; resize: none; border: 0; outline: 0; background: transparent; color: var(--fg);
+    font: inherit; padding: 6px 8px; min-height: 38px; max-height: 40vh;
+  }
+  textarea::placeholder { color: var(--muted); }
+  .controls { display: flex; align-items: center; gap: 6px; padding: 0 6px 6px; }
+  select { font: inherit; font-size: .88em; color: var(--fg); background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; max-width: 42%; }
+  .controls .spacer { flex: 1; }
+  .send { background: var(--accent); color: var(--on-accent); border: 0; border-radius: 5px; width: 28px; height: 26px; cursor: pointer; display: grid; place-items: center; }
+  .send:disabled { opacity: .4; cursor: default; }
+  .send.stop { background: var(--danger); }
+  .foot { font-size: .8em; color: var(--muted); padding: 0 10px 6px; display: flex; justify-content: space-between; gap: 8px; }
+  .foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="title">
+      <svg class="spark" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0l1.6 5.2L15 6.4l-4.3 2.9L12.3 15 8 11.6 3.7 15l1.6-5.7L1 6.4l5.4-1.2z"/></svg>
+      Claude
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="newBtn" title="New chat">＋ New</button>
+  </div>
+
+  <div id="log"></div>
+  <div class="status" id="status"></div>
+
+  <div class="composer">
+    <div class="ctxrow" id="ctxrow" hidden>
+      <span class="ctx" id="ctx" title="Sent with your message as context"><span id="ctxLabel"></span><button id="ctxToggle" title="Don't attach">✕</button></span>
+    </div>
+    <textarea id="input" rows="2" placeholder="Ask Claude anything — ⏎ to send, ⇧⏎ for a new line"></textarea>
+    <div class="controls">
+      <select id="mode" title="What Claude may do">
+        <option value="plan">Chat — read-only</option>
+        <option value="acceptEdits">Edit — changes files</option>
+        <option value="bypassPermissions">Agent — files &amp; commands</option>
+        <option value="default">Ask — CLI defaults</option>
+      </select>
+      <select id="model" title="Model">
+        <option value="">Default model</option>
+        <option value="opus">Opus</option>
+        <option value="sonnet">Sonnet</option>
+        <option value="haiku">Haiku</option>
+      </select>
+      <div class="spacer"></div>
+      <button class="send" id="send" title="Send (⏎)" disabled>
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 2l5 5-1.1 1.1L8.8 5V14H7.2V5L4.1 8.1 3 7z"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="foot"><span id="footL"></span><span id="footR"></span></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const log = $("log"), input = $("input"), sendBtn = $("send"), statusEl = $("status");
+  const modeSel = $("mode"), modelSel = $("model");
+  const bridge = window.openidea || { postMessage() {}, onMessage() {} };
+  const post = (o) => bridge.postMessage(JSON.stringify(o));
+
+  let busy = false, polling = false, ctxLabel = null, ctxOn = true, root = "";
+  let current = null;            // { el, text } of the streaming assistant message
+  const tools = new Map();       // tool_use id -> status element
+
+  // ---------- helpers ----------
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+  const atBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  const scroll = (force) => { if (force || stick) log.scrollTop = log.scrollHeight; };
+  let stick = true;
+  log.addEventListener("scroll", () => { stick = atBottom(); });
+
+  // ---------- markdown ----------
+  const FILE_RE = /^(?:\/|\.{0,2}\/)?[\w@.\-]+(?:\/[\w@.\-]+)*\.[A-Za-z0-9]{1,8}(?::(\d+)(?:-\d+)?)?$/;
+  function inline(s) {
+    // Code spans first, protected from the other rules.
+    const codes = [];
+    s = s.replace(/`([^`\n]+)`/g, (_, c) => { codes.push(c); return "\u0000" + (codes.length - 1) + "\u0000"; });
+    s = esc(s)
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>")
+      .replace(/(^|\W)_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>")
+      .replace(/~~([^~]+)~~/g, "<del>$1</del>");
+    return s.replace(/\u0000(\d+)\u0000/g, (_, i) => {
+      const c = codes[+i];
+      if (FILE_RE.test(c) && c.includes(".")) return `<code class="file-link" data-path="${esc(c)}">${esc(c)}</code>`;
+      return `<code>${esc(c)}</code>`;
+    });
+  }
+  function markdown(src, streaming) {
+    const lines = src.replace(/\r/g, "").split("\n");
+    let out = "", i = 0, para = [];
+    const flush = () => { if (para.length) { out += "<p>" + inline(para.join("\n")).replace(/\n/g, "<br>") + "</p>"; para = []; } };
+    while (i < lines.length) {
+      const line = lines[i];
+      const fence = line.match(/^\s*(```+|~~~+)\s*([\w+#.-]*)/);
+      if (fence) {
+        flush();
+        const close = fence[1], lang = fence[2] || "";
+        const body = [];
+        i++;
+        while (i < lines.length && !lines[i].trim().startsWith(close)) body.push(lines[i++]);
+        i++;
+        out += `<div class="code"><div class="bar"><span>${esc(lang)}</span><button class="icon-btn copy" title="Copy">Copy</button></div><pre><code>${esc(body.join("\n"))}</code></pre></div>`;
+        continue;
+      }
+      let m;
+      if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { flush(); const n = Math.min(m[1].length, 4); out += `<h${n}>${inline(m[2])}</h${n}>`; i++; continue; }
+      if (/^\s*(---|\*\*\*|___)\s*$/.test(line)) { flush(); out += "<hr>"; i++; continue; }
+      if (/^\s*>/.test(line)) {
+        flush(); const q = [];
+        while (i < lines.length && /^\s*>/.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/, ""));
+        out += "<blockquote>" + markdown(q.join("\n")) + "</blockquote>"; continue;
+      }
+      if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|?\s*:?-+/.test(lines[i + 1])) {
+        flush();
+        const row = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+        const head = row(line); i += 2;
+        let t = "<table><tr>" + head.map((h) => `<th>${inline(h)}</th>`).join("") + "</tr>";
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) t += "<tr>" + row(lines[i++]).map((c) => `<td>${inline(c)}</td>`).join("") + "</tr>";
+        out += t + "</table>"; continue;
+      }
+      if ((m = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/))) {
+        flush();
+        const ordered = /\d/.test(m[2]);
+        let items = [];
+        while (i < lines.length && (m = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/))) {
+          let item = m[3]; i++;
+          while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) item += "\n" + lines[i++].trim();
+          items.push(item.replace(/^\[( |x)\]\s*/i, (_, x) => (x.trim() ? "☑ " : "☐ ")));
+        }
+        const tag = ordered ? "ol" : "ul";
+        out += `<${tag}>` + items.map((it) => `<li>${inline(it).replace(/\n/g, "<br>")}</li>`).join("") + `</${tag}>`;
+        continue;
+      }
+      if (!line.trim()) { flush(); i++; continue; }
+      para.push(line); i++;
+    }
+    flush();
+    return out;
+  }
+
+  // ---------- rendering ----------
+  function clearEmpty() { const e = log.querySelector(".empty"); if (e) e.remove(); }
+  function showEmpty() {
+    log.innerHTML = "";
+    const e = el("div", "empty", `
+      <svg class="spark" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0l1.6 5.2L15 6.4l-4.3 2.9L12.3 15 8 11.6 3.7 15l1.6-5.7L1 6.4l5.4-1.2z"/></svg>
+      <h2>Ask Claude</h2>
+      <div>Claude Code works in this project with the file you have open as context.</div>`);
+    const s = el("div", "suggest");
+    ["Explain the open file", "Find possible bugs in my selection", "Write tests for the open file", "Summarize this project's structure"].forEach((t) => {
+      const b = el("button", null, esc(t));
+      b.onclick = () => { input.value = t; update(); input.focus(); };
+      s.appendChild(b);
+    });
+    e.appendChild(s);
+    log.appendChild(e);
+  }
+  function addUser(text, context) {
+    clearEmpty(); endText();
+    const m = el("div", "msg user");
+    if (context) m.appendChild(el("div", "chip", "📎 " + esc(context)));
+    m.appendChild(document.createTextNode(text));
+    log.appendChild(m);
+    scroll(true);
+  }
+  function textDelta(t) {
+    clearEmpty();
+    if (!current) { current = { el: el("div", "msg assistant"), text: "" }; log.appendChild(current.el); }
+    current.text += t;
+    renderCurrent(true);
+  }
+  let raf = 0;
+  function renderCurrent(streaming) {
+    if (!current) return;
+    if (streaming) {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; if (current) { current.el.innerHTML = markdown(current.text, true); current.el.classList.toggle("cursor", busy); scroll(); } });
+    } else {
+      current.el.innerHTML = markdown(current.text, false);
+      current.el.classList.remove("cursor");
+    }
+  }
+  function endText() { if (current) { renderCurrent(false); current = null; } }
+  function addTool(ev) {
+    clearEmpty(); endText();
+    const d = el("details", "tool" + (ev.sub ? " sub" : ""));
+    const s = el("summary");
+    const st = el("span", "st run", "◌");
+    s.appendChild(st);
+    s.appendChild(el("span", "name", esc(ev.name)));
+    const ttl = el("span", "ttl", esc(ev.title || ""));
+    if (ev.path) { ttl.classList.add("file-link"); ttl.dataset.path = ev.path; ttl.title = "Open " + ev.path; }
+    s.appendChild(ttl);
+    d.appendChild(s);
+    if (ev.detail) {
+      const pre = el("pre");
+      pre.innerHTML = String(ev.detail).split("\n").map((l) =>
+        l.startsWith("+ ") ? `<span class="add">${esc(l)}</span>` : l.startsWith("- ") ? `<span class="del">${esc(l)}</span>` : esc(l)).join("\n");
+      d.appendChild(pre);
+      if (ev.name === "Edit" || ev.name === "MultiEdit" || ev.name === "TodoWrite") d.open = true;
+    }
+    if (ev.id) tools.set(ev.id, { st, d });
+    log.appendChild(d);
+    scroll();
+  }
+  function toolResult(ev) {
+    const t = tools.get(ev.id);
+    if (!t) return;
+    t.st.className = "st " + (ev.error ? "err" : "ok");
+    t.st.textContent = ev.error ? "✕" : "✓";
+    if (ev.t && (ev.error || !t.d.querySelector("pre"))) {
+      const pre = el("pre"); pre.textContent = ev.t; t.d.appendChild(pre);
+      if (ev.error) t.d.open = true;
+    }
+  }
+  function note(text, cls, extra) {
+    clearEmpty(); endText();
+    const n = el("div", "note" + (cls ? " " + cls : ""));
+    n.textContent = text;
+    if (extra) n.appendChild(extra);
+    log.appendChild(n);
+    scroll();
+  }
+  function done(ev) {
+    endText();
+    tools.forEach((t) => { if (t.st.classList.contains("run")) { t.st.className = "st"; t.st.textContent = "·"; } });
+    if (ev.error) note(typeof ev.t === "string" ? ev.t : "The turn ended with an error.", "error");
+    if (ev.denials && ev.denials.length) {
+      const names = [...new Set(ev.denials)].join(", ");
+      const btn = el("button", null, "Switch to Agent mode");
+      btn.onclick = () => { modeSel.value = "bypassPermissions"; btn.disabled = true; input.focus(); };
+      note(`Not allowed in this mode: ${names}.`, "warn", modeSel.value === "bypassPermissions" ? null : btn);
+    }
+    const parts = [];
+    if (typeof ev.cost === "number") parts.push("$" + ev.cost.toFixed(ev.cost < 0.1 ? 4 : 2));
+    if (typeof ev.ms === "number") parts.push((ev.ms / 1000).toFixed(1) + "s");
+    if (typeof ev.turns === "number") parts.push(ev.turns + (ev.turns === 1 ? " turn" : " turns"));
+    if (parts.length) $("footR").textContent = parts.join(" · ");
+  }
+  function apply(ev, replay) {
+    switch (ev.k) {
+      case "user": addUser(ev.t, ev.context); break;
+      case "init":
+        if (ev.model) $("footL").textContent = ev.model;
+        break;
+      case "text": textDelta(ev.t || ""); break;
+      case "block_end": endText(); break;
+      case "tool": addTool(ev); break;
+      case "tool_result": toolResult(ev); break;
+      case "status": if (!replay) setStatus(ev.t); break;
+      case "done": done(ev); break;
+      case "error": note(ev.t, "error"); break;
+      case "log": note(ev.t); break;
+    }
+  }
+
+  // ---------- state ----------
+  function setStatus(t) {
+    statusEl.innerHTML = t ? `<span class="dots">${esc(t)}</span>` : "";
+  }
+  function setBusy(b) {
+    busy = b;
+    sendBtn.classList.toggle("stop", b);
+    sendBtn.title = b ? "Stop" : "Send (⏎)";
+    sendBtn.innerHTML = b
+      ? '<svg width="12" height="12" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor"/></svg>'
+      : '<svg width="14" height="14" viewBox="0 0 16 16"><path fill="currentColor" d="M8 2l5 5-1.1 1.1L8.8 5V14H7.2V5L4.1 8.1 3 7z"/></svg>';
+    if (b) { if (!statusEl.textContent) setStatus("Working"); startPolling(); }
+    else { setStatus(""); endText(); }
+    update();
+  }
+  function update() { sendBtn.disabled = !busy && !input.value.trim(); }
+  function setContext(label) {
+    ctxLabel = label || null;
+    $("ctxrow").hidden = !ctxLabel;
+    $("ctxLabel").textContent = ctxLabel ? "📎 " + ctxLabel : "";
+    $("ctx").classList.toggle("off", !ctxOn);
+    $("ctxToggle").textContent = ctxOn ? "✕" : "↺";
+    $("ctxToggle").title = ctxOn ? "Don't attach" : "Attach";
+  }
+  let watchdog = 0;
+  function startPolling() {
+    if (polling) return;
+    polling = true;
+    post({ op: "poll" });
+    // A lost reply (plugin restarted) must not stall the chat.
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => { if (polling) { polling = false; if (busy) startPolling(); } }, 15000);
+  }
+
+  function send() {
+    if (busy) { post({ op: "stop" }); return; }
+    const text = input.value.trim();
+    if (!text) return;
+    addUser(text, ctxOn ? ctxLabel : null);
+    input.value = ""; autosize(); update();
+    stick = true;
+    setStatus("Starting");
+    post({ op: "send", text, ctx: ctxOn, mode: modeSel.value, model: modelSel.value });
+  }
+
+  // ---------- messages from the plugin ----------
+  bridge.onMessage((raw) => {
+    let m; try { m = JSON.parse(raw); } catch { return; }
+    switch (m.k) {
+      case "hello":
+        root = m.root || "";
+        log.innerHTML = ""; tools.clear(); current = null;
+        if (m.mode) modeSel.value = m.mode;
+        if (m.model) {
+          if (![...modelSel.options].some((o) => o.value === m.model)) modelSel.add(new Option(m.model, m.model));
+          modelSel.value = m.model;
+        }
+        ctxOn = m.includeContext !== false;
+        setContext(m.context);
+        if (m.transcript && m.transcript.length) { m.transcript.forEach((e) => apply(e, true)); endText(); scroll(true); }
+        else showEmpty();
+        setBusy(!!m.busy);
+        break;
+      case "events":
+        polling = false;
+        (m.events || []).forEach((e) => apply(e, false));
+        if (m.busy !== busy) setBusy(!!m.busy);
+        else if (m.busy) startPolling();
+        if (!m.busy) setStatus("");
+        break;
+      case "reset":
+        tools.clear(); current = null; $("footR").textContent = "";
+        showEmpty(); setBusy(false); input.focus();
+        break;
+      case "context":
+        setContext(m.context);
+        break;
+      case "focus":
+        if (m.context) { ctxOn = true; setContext(m.context); }
+        input.focus();
+        break;
+    }
+  });
+
+  // ---------- UI events ----------
+  function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, innerHeight * 0.4) + "px"; }
+  input.addEventListener("input", () => { autosize(); update(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (input.value.trim()) send(); }
+    if (e.key === "Escape" && busy) post({ op: "stop" });
+  });
+  input.addEventListener("focus", () => post({ op: "context" }));
+  sendBtn.onclick = send;
+  $("newBtn").onclick = () => { if (!busy || confirm("Stop Claude and start a new chat?")) post({ op: "new" }); };
+  $("ctxToggle").onclick = () => { ctxOn = !ctxOn; setContext(ctxLabel); };
+  log.addEventListener("click", (e) => {
+    const link = e.target.closest(".file-link");
+    if (link) {
+      e.preventDefault();
+      const [p, line] = link.dataset.path.split(":");
+      const abs = p.startsWith("/") || !root ? p : root.replace(/\/$/, "") + "/" + p.replace(/^\.\//, "");
+      post({ op: "open", path: abs, line: line ? Math.max(0, parseInt(line, 10) - 1) : 0 });
+      return;
+    }
+    const copy = e.target.closest(".copy");
+    if (copy) {
+      const code = copy.closest(".code").querySelector("code").textContent;
+      const done = () => { copy.textContent = "Copied"; setTimeout(() => (copy.textContent = "Copy"), 1200); };
+      (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).then(done, () => { post({ op: "copy", text: code }); done(); });
+    }
+  });
+
+  showEmpty();
+  post({ op: "hello" });
+})();
+</script>
+</body>
+</html>

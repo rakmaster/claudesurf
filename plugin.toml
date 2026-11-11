@@ -1,0 +1,55 @@
+# OpenIDEA plugin: ClaudeSurf — a Claude chat panel in the style of Windsurf's.
+id = "rakmaster.claudesurf"
+name = "ClaudeSurf"
+version = "0.1.0"
+description = "A Claude chat panel docked beside the editor, in the style of Windsurf's. It drives the Claude Code CLI you are already signed in to (no API key): streaming answers, file edits and tool calls shown inline, the active file and selection as context, and sessions that resume. Community plugin; not affiliated with Anthropic or Windsurf."
+authors = ["rakmaster"]
+homepage = "https://github.com/rakmaster/claudesurf"
+license = "MIT"
+change-notes = "0.1.0 — First release: chat panel, streaming, tool cards with clickable files, Chat / Edit / Agent modes, model choice, selection as context, resumable sessions."
+categories = ["ai", "tools"]
+icon = "icons/icon.svg"
+icon-dark = "icons/icon_dark.svg"
+engines.openidea = "^1.4"
+wasm = "dist/plugin.wasm"
+activation = ["on-view:chat", "on-command:*"]
+
+[capabilities]
+required = ["process:claude", "project.read", "editor.read", "storage"]
+optional = ["clipboard"]
+
+[[contributes.views]]
+id = "chat"
+title = "Claude"
+icon = "icons/view.svg"
+location = "right"
+web = "web/index.html"
+header = "none"
+
+[[contributes.commands]]
+id = "open"
+title = "ClaudeSurf: Open Chat"
+category = "ClaudeSurf"
+
+[[contributes.commands]]
+id = "new-chat"
+title = "ClaudeSurf: New Chat"
+category = "ClaudeSurf"
+
+[[contributes.commands]]
+id = "ask-selection"
+title = "ClaudeSurf: Ask Claude About Selection"
+category = "ClaudeSurf"
+
+[[contributes.menus]]
+menu = "editor.context"
+command = "ask-selection"
+
+[[contributes.keymaps]]
+command = "ask-selection"
+key = "Ctrl+Shift+L"
+mac = "Meta+Shift+L"
+
+[contributes.settings]
+title = "ClaudeSurf"
+schema = "settings.schema.json"

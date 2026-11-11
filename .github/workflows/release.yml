@@ -1,0 +1,83 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+env:
+  # The OpenIDEA release whose plugin tool checks and packs the plugin.
+  OPENIDEA_VERSION: v0.1.41
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-wasip2
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build component
+        run: |
+          cargo build --locked --release --target wasm32-wasip2
+          mkdir -p dist
+          cp target/wasm32-wasip2/release/claudesurf.wasm dist/plugin.wasm
+
+      - name: Get openidea-plugin
+        run: |
+          curl -fsSL "https://github.com/l0ng-ai/openidea/releases/download/${OPENIDEA_VERSION}/openidea-plugin-linux-x86_64.gz" \
+            | gunzip > /usr/local/bin/openidea-plugin
+          chmod +x /usr/local/bin/openidea-plugin
+
+      - name: Check package
+        run: openidea-plugin check .
+
+      - name: Version matches tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' plugin.toml | head -1)
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "plugin.toml version ${version} does not match tag ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+      - name: Pack and sign
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          OPENIDEA_PUBLISHER_KEY: ${{ secrets.OPENIDEA_PUBLISHER_KEY }}
+        run: |
+          if [ -z "${OPENIDEA_PUBLISHER_KEY}" ]; then
+            echo "Set the OPENIDEA_PUBLISHER_KEY repository secret to sign the package" >&2
+            exit 1
+          fi
+          umask 077
+          printf '%s' "${OPENIDEA_PUBLISHER_KEY}" > "${RUNNER_TEMP}/publisher.key"
+          pkg="rakmaster.claudesurf-${GITHUB_REF_NAME#v}.oiplugin"
+          openidea-plugin pack . --key "${RUNNER_TEMP}/publisher.key" --publisher rakmaster --out "${pkg}"
+          rm -f "${RUNNER_TEMP}/publisher.key"
+          openidea-plugin check "${pkg}"
+          sha256sum "${pkg}" | tee "${pkg}.sha256"
+          echo "PKG=${pkg}" >> "${GITHUB_ENV}"
+
+      - name: GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "${PKG}" "${PKG}.sha256" \
+            --title "ClaudeSurf ${GITHUB_REF_NAME}" \
+            --notes "$(sed -n 's/^change-notes *= *"\(.*\)"/\1/p' plugin.toml)
+
+          SHA-256: \`$(cut -d' ' -f1 "${PKG}.sha256")\`"

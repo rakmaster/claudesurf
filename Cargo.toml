@@ -1,0 +1,27 @@
+[package]
+name = "claudesurf"
+version = "0.1.0"
+edition = "2024"
+description = "A Windsurf-style Claude chat panel for OpenIDEA, driving the Claude Code CLI you are signed in to."
+license = "MIT"
+authors = ["rakmaster"]
+repository = "https://github.com/rakmaster/claudesurf"
+publish = false
+
+# A plugin builds on its own (target wasm32-wasip2), outside any workspace.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The SDK of the installed IDE's release (OpenIDEA 0.1.41, plugin API 1.5).
+openidea-plugin = { git = "https://github.com/l0ng-ai/openidea", tag = "v0.1.41" }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
