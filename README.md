@@ -19,7 +19,11 @@ chat is a real multi-turn Claude Code session with your project as its working d
   - **Chat**: read-only (`plan`)
   - **Edit**: may change files (`acceptEdits`)
   - **Agent**: may change files and run commands without asking (`bypassPermissions`)
-  - **Ask**: Claude Code's own defaults
+  - **Ask**: Claude Code's own defaults; anything that needs approval is asked in the panel
+- Permission prompts in the panel: when Claude Code wants approval (in any mode, including
+  commands that Agent mode still asks about), a card shows the tool and what it will do, with
+  **Allow**, **Allow for this chat** (Claude Code's suggested rule, kept to the session, never
+  written to settings files) and **Deny**
 - Model picker (default / Opus / Sonnet / Haiku, or any model id in Settings)
 - Conversations resume (`--resume`) after OpenIDEA unloads the idle plugin, or when you
   switch mode or model
@@ -57,6 +61,10 @@ Code, under your Claude Code account and settings.
 | `web/index.html` | The chat page (self-contained; the frame has no network) |
 | `settings.schema.json` | Settings › Plugins › ClaudeSurf |
 
+`claude` runs with `--permission-prompt-tool stdio`: approval requests arrive on stdout as
+`control_request` (`can_use_tool`) lines, the panel shows them, and the answer goes back on
+stdin as a `control_response`. Without it, `claude -p` has nobody to ask and denies them.
+
 The page and the component exchange JSON over `openidea.postMessage`. A plugin only runs when
 called, so while Claude works the page sends `poll`. Each poll waits up to 120 ms on the
 child process, parses complete stdout lines and posts the UI events back.
@@ -68,6 +76,12 @@ child process, parses complete stdout lines and posts the UI events back.
 openidea-plugin check .         # validate as installing would
 openidea-plugin link .          # load this folder in OpenIDEA (then Settings › Plugins › Reload)
 ```
+
+OpenIDEA caches a web view's page for a year under a URL that holds the plugin's version
+(a linked folder has no package digest). After changing anything in `web/`, bump `version`
+in `plugin.toml`, or the panel keeps the old page even after Reload. If you change what the
+page and the component send each other, also bump `PAGE_REV` (`src/lib.rs`) and `REV`
+(`web/index.html`); a test checks they match.
 
 Get the tool with
 `cargo install --locked --git https://github.com/l0ng-ai/openidea --tag v0.1.41 ide-host --bin openidea-plugin`.

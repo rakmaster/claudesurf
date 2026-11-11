@@ -3,6 +3,8 @@
 //! the translation of what it prints (one JSON object per line) into the small
 //! UI events the chat page draws. Pure functions, tested natively.
 
+use std::collections::HashSet;
+
 use serde_json::{Value, json};
 
 /// Characters of a tool result or diff shown in a tool card.
@@ -40,6 +42,10 @@ pub fn claude_args(mode: &str, model: &str, resume: Option<&str>, system_prompt:
         "--include-partial-messages",
         "--permission-mode",
         sanitize_mode(mode),
+        // Questions about tool use come to us as `control_request`s on stdout
+        // and are answered on stdin, so the panel can ask the person.
+        "--permission-prompt-tool",
+        "stdio",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -64,6 +70,95 @@ pub fn user_message(text: &str) -> String {
         "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
     });
     format!("{msg}\n")
+}
+
+/// How the person answered a permission prompt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decision {
+    Allow,
+    /// Allow, and add Claude Code's suggested allow rules for the rest of this process.
+    AllowSession,
+    Deny,
+}
+
+impl Decision {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "allow" => Some(Self::Allow),
+            "session" => Some(Self::AllowSession),
+            "deny" => Some(Self::Deny),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Allow => "Allowed",
+            Self::AllowSession => "Allowed for this chat",
+            Self::Deny => "Denied",
+        }
+    }
+}
+
+/// Claude Code's suggested allow rules for a `can_use_tool` request, scoped to the session
+/// (never written to settings files).
+fn session_rules(request: &Value) -> Vec<Value> {
+    request
+        .get("permission_suggestions")
+        .and_then(Value::as_array)
+        .map(|s| {
+            s.iter()
+                .filter(|x| x["type"] == "addRules" && x["behavior"] == "allow")
+                .map(|x| {
+                    let mut x = x.clone();
+                    x["destination"] = json!("session");
+                    x
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The stdin line answering `can_use_tool` request `id`.
+pub fn permission_reply(id: &str, request: &Value, d: Decision) -> String {
+    let input = request.get("input").cloned().unwrap_or_else(|| json!({}));
+    let response = match d {
+        Decision::Deny => json!({ "behavior": "deny", "message": "The user denied this in the ClaudeSurf panel." }),
+        Decision::Allow => json!({ "behavior": "allow", "updatedInput": input }),
+        Decision::AllowSession => {
+            json!({ "behavior": "allow", "updatedInput": input, "updatedPermissions": session_rules(request) })
+        }
+    };
+    let msg = json!({
+        "type": "control_response",
+        "response": { "subtype": "success", "request_id": id, "response": response },
+    });
+    format!("{msg}\n")
+}
+
+/// The stdin line refusing a control request the panel does not handle.
+pub fn control_error(id: &str, error: &str) -> String {
+    let msg = json!({
+        "type": "control_response",
+        "response": { "subtype": "error", "request_id": id, "error": error },
+    });
+    format!("{msg}\n")
+}
+
+/// The UI event asking the person about a `can_use_tool` request.
+fn permission_event(id: &str, request: &Value) -> Value {
+    let name = request.get("tool_name").and_then(Value::as_str).unwrap_or("tool");
+    let (title, path, detail) = tool_summary(name, request.get("input").unwrap_or(&Value::Null));
+    json!({
+        "k": "permission",
+        "id": id,
+        "name": request.get("display_name").and_then(Value::as_str).unwrap_or(name),
+        "title": title,
+        "path": path,
+        "detail": detail,
+        "reason": request.get("decision_reason").or_else(|| request.get("description")),
+        "session": !session_rules(request).is_empty(),
+    })
 }
 
 /// What of the editor is attached to a message.
@@ -106,6 +201,23 @@ pub fn relative<'a>(path: &'a str, root: &str) -> &'a str {
         return path;
     }
     path.strip_prefix(root).and_then(|p| p.strip_prefix('/')).unwrap_or(path)
+}
+
+/// An `http://` or `https://` URL with a host and no whitespace or control characters
+/// (the only kind the panel asks the IDE to open in the browser).
+pub fn is_web_url(url: &str) -> bool {
+    let lower = url.get(..8).unwrap_or(url).to_ascii_lowercase();
+    let rest = if lower.starts_with("https://") {
+        &url[8..]
+    } else if lower.starts_with("http://") {
+        &url[7..]
+    } else {
+        return false;
+    };
+    url.len() <= 8192
+        && !rest.is_empty()
+        && !rest.starts_with('/')
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 /// The first `max` characters of `s`, with an ellipsis line when cut.
@@ -213,6 +325,12 @@ pub struct Parser {
     saw_delta: bool,
     pub session_id: Option<String>,
     pub model: Option<String>,
+    /// `can_use_tool` requests waiting for the person: (request id, request).
+    pub prompts: Vec<(String, Value)>,
+    /// Lines to write to Claude's stdin (answers to control requests).
+    pub replies: Vec<String>,
+    /// Tool uses the person denied, left out of the turn's "not allowed" list.
+    denied: HashSet<String>,
 }
 
 impl Parser {
@@ -240,6 +358,32 @@ impl Parser {
                     "mode": v.get("permissionMode"),
                 })]
             }
+            "control_request" => {
+                let id = v.get("request_id").and_then(Value::as_str).unwrap_or("").to_owned();
+                let req = v.get("request").cloned().unwrap_or(Value::Null);
+                let subtype = req.get("subtype").and_then(Value::as_str).unwrap_or("");
+                if id.is_empty() {
+                    return vec![];
+                }
+                if subtype == "can_use_tool" {
+                    let ev = permission_event(&id, &req);
+                    self.prompts.push((id, req));
+                    vec![ev]
+                } else {
+                    self.replies.push(control_error(&id, &format!("ClaudeSurf does not handle {subtype} requests")));
+                    vec![]
+                }
+            }
+            "control_cancel_request" => {
+                let id = v.get("request_id").and_then(Value::as_str).unwrap_or("");
+                match self.prompts.iter().position(|(p, _)| p == id) {
+                    Some(i) => {
+                        let (id, req) = self.prompts.remove(i);
+                        vec![permission_done(&id, &req, "Withdrawn by Claude")]
+                    }
+                    None => vec![],
+                }
+            }
             "stream_event" if top => self.stream_event(v.get("event").unwrap_or(&Value::Null)),
             "assistant" => self.assistant(&v, top),
             "user" => {
@@ -264,8 +408,16 @@ impl Parser {
                 let denials: Vec<Value> = v
                     .get("permission_denials")
                     .and_then(Value::as_array)
-                    .map(|d| d.iter().filter_map(|x| x.get("tool_name").cloned()).collect())
+                    .map(|d| {
+                        d.iter()
+                            .filter(|x| {
+                                !x.get("tool_use_id").and_then(Value::as_str).is_some_and(|t| self.denied.contains(t))
+                            })
+                            .filter_map(|x| x.get("tool_name").cloned())
+                            .collect()
+                    })
                     .unwrap_or_default();
+                self.denied.clear();
                 let is_error = v.get("is_error").and_then(Value::as_bool).unwrap_or(false)
                     || v.get("subtype").and_then(Value::as_str).is_some_and(|s| s != "success");
                 vec![json!({
@@ -280,6 +432,32 @@ impl Parser {
             }
             _ => vec![],
         }
+    }
+
+    /// The pending prompts as UI events (for a page that opens mid-turn).
+    pub fn prompt_events(&self) -> Vec<Value> {
+        self.prompts.iter().map(|(id, req)| permission_event(id, req)).collect()
+    }
+
+    /// Answers pending prompt `id`: the stdin line and the UI event, or `None`
+    /// when it is no longer pending.
+    pub fn answer(&mut self, id: &str, d: Decision) -> Option<(String, Value)> {
+        let i = self.prompts.iter().position(|(p, _)| p == id)?;
+        let (id, req) = self.prompts.remove(i);
+        if d == Decision::Deny {
+            if let Some(t) = req.get("tool_use_id").and_then(Value::as_str) {
+                self.denied.insert(t.to_owned());
+            }
+        }
+        Some((permission_reply(&id, &req, d), permission_done(&id, &req, d.label())))
+    }
+
+    /// Forgets the prompts of a process that is gone.
+    pub fn drop_prompts(&mut self) -> Vec<Value> {
+        let out = self.prompts.iter().map(|(id, req)| permission_done(id, req, "Not answered")).collect();
+        self.prompts.clear();
+        self.replies.clear();
+        out
     }
 
     fn stream_event(&mut self, e: &Value) -> Vec<Value> {
@@ -338,6 +516,13 @@ impl Parser {
     }
 }
 
+/// The UI event closing a prompt: how it ended, with enough to show it on replay.
+fn permission_done(id: &str, request: &Value, how: &str) -> Value {
+    let name = request.get("tool_name").and_then(Value::as_str).unwrap_or("tool");
+    let (title, _, _) = tool_summary(name, request.get("input").unwrap_or(&Value::Null));
+    json!({ "k": "permission_done", "id": id, "name": name, "title": title, "t": how })
+}
+
 /// Splits complete lines off `buf`, leaving a trailing partial line in it.
 pub fn take_lines(buf: &mut String) -> Vec<String> {
     let Some(end) = buf.rfind('\n') else { return vec![] };
@@ -358,7 +543,7 @@ pub fn record(transcript: &mut Vec<Value>, ev: Value, max: usize) {
             }
         }
     }
-    if matches!(ev["k"].as_str(), Some("status" | "log")) {
+    if matches!(ev["k"].as_str(), Some("status" | "log" | "permission")) {
         return;
     }
     transcript.push(ev);
@@ -452,6 +637,62 @@ mod tests {
     }
 
     #[test]
+    fn permission_round_trip() {
+        let a = claude_args("default", "", None, "");
+        assert!(a.windows(2).any(|w| w == ["--permission-prompt-tool", "stdio"]));
+
+        let mut p = Parser::default();
+        let ev = p.feed(r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"touch x"},"description":"Create x","tool_use_id":"t1","permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"touch x"}],"behavior":"allow","destination":"localSettings"},{"type":"setMode","mode":"acceptEdits","destination":"session"}]}}"#);
+        assert_eq!(ev[0]["k"], "permission");
+        assert_eq!(ev[0]["id"], "r1");
+        assert_eq!(ev[0]["title"], "touch x");
+        assert_eq!(ev[0]["reason"], "Create x");
+        assert_eq!(ev[0]["session"], true);
+        assert_eq!(p.prompt_events().len(), 1);
+
+        let (line, done) = p.answer("r1", Decision::AllowSession).unwrap();
+        let v: Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(v["type"], "control_response");
+        assert_eq!(v["response"]["request_id"], "r1");
+        let r = &v["response"]["response"];
+        assert_eq!(r["behavior"], "allow");
+        assert_eq!(r["updatedInput"]["command"], "touch x");
+        // Only allow rules, kept to the session.
+        assert_eq!(r["updatedPermissions"].as_array().unwrap().len(), 1);
+        assert_eq!(r["updatedPermissions"][0]["destination"], "session");
+        assert_eq!(done["k"], "permission_done");
+        assert_eq!(done["t"], "Allowed for this chat");
+        assert!(p.answer("r1", Decision::Allow).is_none());
+    }
+
+    #[test]
+    fn denied_prompts_are_not_mode_denials() {
+        let mut p = Parser::default();
+        p.feed(r#"{"type":"control_request","request_id":"r2","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"t2"}}"#);
+        let (line, _) = p.answer("r2", Decision::Deny).unwrap();
+        assert!(line.contains(r#""behavior":"deny""#));
+        let done = p.feed(r#"{"type":"result","subtype":"success","is_error":false,"permission_denials":[{"tool_name":"Bash","tool_use_id":"t2"},{"tool_name":"Write","tool_use_id":"t3"}]}"#);
+        assert_eq!(done[0]["denials"], json!(["Write"]));
+    }
+
+    #[test]
+    fn other_control_requests_are_refused_and_cancels_close_prompts() {
+        let mut p = Parser::default();
+        assert!(p.feed(r#"{"type":"control_request","request_id":"r3","request":{"subtype":"hook_callback"}}"#).is_empty());
+        let v: Value = serde_json::from_str(p.replies[0].trim()).unwrap();
+        assert_eq!(v["response"]["subtype"], "error");
+        assert_eq!(v["response"]["request_id"], "r3");
+
+        p.feed(r#"{"type":"control_request","request_id":"r4","request":{"subtype":"can_use_tool","tool_name":"Read","input":{"file_path":"/a"}}}"#);
+        let c = p.feed(r#"{"type":"control_cancel_request","request_id":"r4"}"#);
+        assert_eq!(c[0]["k"], "permission_done");
+        assert!(p.prompts.is_empty());
+        p.feed(r#"{"type":"control_request","request_id":"r5","request":{"subtype":"can_use_tool","tool_name":"Read","input":{}}}"#);
+        assert_eq!(p.drop_prompts()[0]["t"], "Not answered");
+        assert!(p.prompts.is_empty() && p.replies.is_empty());
+    }
+
+    #[test]
     fn transcript_merges_text() {
         let mut t = vec![];
         record(&mut t, json!({"k":"text","t":"a"}), 10);
@@ -463,6 +704,15 @@ mod tests {
             record(&mut t, json!({"k":"block_end"}), 10);
         }
         assert_eq!(t.len(), 10);
+    }
+
+    #[test]
+    fn only_web_urls_open() {
+        assert!(is_web_url("https://claude.ai/artifact/x?sk=1#a"));
+        assert!(is_web_url("HTTP://example.com"));
+        for bad in ["file:///etc/passwd", "javascript:alert(1)", "https://", "https:///x", "https://a b", "ftp://x", "http://a\nb"] {
+            assert!(!is_web_url(bad), "{bad}");
+        }
     }
 
     #[test]

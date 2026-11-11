@@ -15,11 +15,17 @@ use std::collections::HashMap;
 use openidea_plugin::host::{self, Child, Command};
 use openidea_plugin::views::{View, ViewEvent, Viewport, Views};
 use openidea_plugin::{Error, Invocation, LogLevel, Plugin, register_plugin};
-use protocol::{EditorContext, Parser};
+use protocol::{Decision, EditorContext, Parser};
 use serde_json::{Value, json};
 
 pub const VIEW: &str = "chat";
 const PROGRAM: &str = "claude";
+/// The page revision this component speaks to (`REV` in `web/index.html`).
+/// Bump both when the page must change along with the component.
+pub const PAGE_REV: u64 = 3;
+/// Polls (about 120 ms each while Claude waits) before a prompt the page has not
+/// confirmed showing is reported as stuck.
+const UNSEEN_POLLS: u32 = 25;
 /// UI events kept per project, replayed when the panel opens again.
 const MAX_TRANSCRIPT: usize = 3000;
 
@@ -36,6 +42,11 @@ struct Session {
     loaded: bool,
     /// The selection captured by "Ask Claude About Selection", for the next message.
     pending: Option<EditorContext>,
+    /// Permission prompts the page confirmed it shows.
+    seen: std::collections::HashSet<String>,
+    /// Polls while a prompt is unconfirmed, and whether that was reported.
+    unseen_polls: u32,
+    unseen_reported: bool,
 }
 
 #[derive(Default)]
@@ -109,6 +120,8 @@ impl ClaudeSurf {
             "busy": s.busy,
             "session": s.parser.session_id,
             "transcript": s.transcript,
+            "prompts": s.parser.prompt_events(),
+            "rev": PAGE_REV,
             "mode": protocol::sanitize_mode(&setting_str("mode")),
             "model": setting_str("model"),
             "includeContext": host::setting_bool("includeContext").unwrap_or(true),
@@ -132,6 +145,14 @@ impl ClaudeSurf {
         if s.busy {
             return Err(Error::Invalid("Claude is still answering; stop it first".into()));
         }
+        if msg["rev"].as_u64() != Some(PAGE_REV) {
+            // The plugin was updated under an open panel: its page can't show
+            // permission prompts, and Claude would wait on them forever.
+            let ev = json!({ "k": "error", "t": "ClaudeSurf was updated while this panel was open. Close and reopen the Claude panel, then send your message again." });
+            post(&json!({ "k": "stale" }));
+            post(&json!({ "k": "events", "events": [ev], "busy": false }));
+            return Ok(());
+        }
         let pending = s.pending.take();
         // Focus is in the panel now; a selection captured by the command wins.
         let context = if !want_context {
@@ -150,6 +171,8 @@ impl ClaudeSurf {
             }
             s.buf.clear();
             s.stderr.clear();
+            s.parser.drop_prompts();
+            s.seen.clear();
             let args = protocol::claude_args(&mode, &model, s.parser.session_id.as_deref(), &system);
             let cmd = Command::new(PROGRAM).args(&args);
             match host::start(&cmd, project.as_ref()) {
@@ -199,6 +222,11 @@ impl ClaudeSurf {
         for line in protocol::take_lines(&mut s.buf) {
             events.extend(s.parser.feed(&line));
         }
+        for reply in std::mem::take(&mut s.parser.replies) {
+            if let Err(e) = child.write(&reply) {
+                host::log(LogLevel::Warn, &format!("answering Claude failed: {e}"));
+            }
+        }
         let mut finished = events.iter().any(|e| e["k"] == "done");
         if let Some(code) = chunk.status {
             // The process ended (crash, kill, bad arguments): say why.
@@ -208,10 +236,23 @@ impl ClaudeSurf {
                 events.push(json!({ "k": "error", "t": t }));
             }
             s.child = None;
+            events.extend(s.parser.drop_prompts());
             finished = true;
         }
         if finished {
             s.busy = false;
+        }
+        // A prompt the page never confirmed: say so instead of waiting silently.
+        let unconfirmed = s.parser.prompts.iter().find(|(id, _)| !s.seen.contains(id)).map(|(id, _)| id.clone());
+        if unconfirmed.is_none() {
+            s.unseen_polls = 0;
+            s.unseen_reported = false;
+        } else if !s.unseen_reported {
+            s.unseen_polls += 1;
+            if s.unseen_polls > UNSEEN_POLLS {
+                s.unseen_reported = true;
+                events.push(json!({ "k": "error", "t": "Claude Code is waiting for your approval, but this panel couldn't show the prompt. Close and reopen the Claude panel to answer it, or press Stop." }));
+            }
         }
         for ev in &events {
             protocol::record(&mut s.transcript, ev.clone(), MAX_TRANSCRIPT);
@@ -228,10 +269,34 @@ impl ClaudeSurf {
         Ok(())
     }
 
+    /// The person answered a permission prompt in the panel.
+    fn permission(&mut self, root: &str, msg: &Value) -> Result<(), Error> {
+        let id = msg["id"].as_str().unwrap_or("");
+        let decision = Decision::parse(msg["decision"].as_str().unwrap_or(""))
+            .ok_or_else(|| Error::Invalid("bad permission decision".into()))?;
+        let s = self.session(root);
+        let Some((reply, ev)) = s.parser.answer(id, decision) else {
+            // Already answered, withdrawn, or the process is gone.
+            post(&json!({ "k": "events", "events": [{ "k": "permission_done", "id": id, "t": "No longer pending" }], "busy": s.busy }));
+            return Ok(());
+        };
+        match s.child.as_ref() {
+            Some(child) => child.write(&reply)?,
+            None => return Err(Error::Invalid("Claude Code is not running".into())),
+        }
+        protocol::record(&mut s.transcript, ev.clone(), MAX_TRANSCRIPT);
+        post(&json!({ "k": "events", "events": [ev], "busy": s.busy }));
+        Ok(())
+    }
+
     fn stop(&mut self, root: &str) {
         let s = self.session(root);
         if let Some(c) = s.child.take() {
             let _ = c.kill();
+        }
+        let dropped = s.parser.drop_prompts();
+        if !dropped.is_empty() {
+            post(&json!({ "k": "events", "events": dropped, "busy": s.busy }));
         }
         if s.busy {
             s.busy = false;
@@ -260,6 +325,11 @@ impl ClaudeSurf {
             "send" => self.send(&root, ctx, &msg)?,
             "poll" => self.poll(&root)?,
             "stop" => self.stop(&root),
+            "permission" => self.permission(&root, &msg)?,
+            "seen" => {
+                let id = msg["id"].as_str().unwrap_or("").to_owned();
+                self.session(&root).seen.insert(id);
+            }
             "new" => self.reset(&root),
             "context" => {
                 let c = editor_context(ctx, &root).map(|c| c.label());
@@ -270,6 +340,15 @@ impl ClaudeSurf {
                 let line = msg["line"].as_u64().unwrap_or(0) as u32;
                 if let Err(e) = host::open_location(path, line, 0) {
                     post(&json!({ "k": "events", "events": [{ "k": "log", "t": format!("Can't open {path}: {e}") }], "busy": self.session(&root).busy }));
+                }
+            }
+            "url" => {
+                let url = msg["url"].as_str().unwrap_or("");
+                if !protocol::is_web_url(url) {
+                    return Err(Error::Invalid(format!("not an http(s) URL: {url}")));
+                }
+                if let Err(e) = host::open_url(url) {
+                    post(&json!({ "k": "events", "events": [{ "k": "log", "t": format!("Can't open {url}: {e}") }], "busy": self.session(&root).busy }));
                 }
             }
             "copy" => {
@@ -331,3 +410,12 @@ impl Views for ClaudeSurf {
 }
 
 register_plugin!(ClaudeSurf, views);
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn page_rev_matches_component() {
+        let page = include_str!("../web/index.html");
+        assert!(page.contains(&format!("const REV = {};", super::PAGE_REV)), "bump REV in web/index.html with PAGE_REV");
+    }
+}
