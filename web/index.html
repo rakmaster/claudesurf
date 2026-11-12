@@ -110,6 +110,21 @@
   .perm.answered { border-color: var(--border); padding: 3px 8px; }
   .perm.answered .why, .perm.answered pre, .perm.answered .btns { display: none; }
   .perm .res { flex: none; font-size: .9em; }
+  /* AskUserQuestion */
+  .perm.ask { border-color: var(--accent); }
+  .ask .q { margin-top: 8px; }
+  .ask .qtext { color: var(--strong); }
+  .ask .tag { font-size: .8em; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; margin-right: 6px; }
+  .ask .opts { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+  .ask .opt { display: flex; flex-direction: column; align-items: flex-start; text-align: left; background: none; border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; cursor: pointer; }
+  .ask .opt:hover { border-color: var(--accent); }
+  .ask .opt.on { border-color: var(--accent); background: var(--hover); }
+  .ask .opt.on .lbl::before { content: "✓ "; color: var(--accent); }
+  .ask .opt .desc { font-size: .88em; color: var(--muted); }
+  .ask .other { width: 100%; margin-top: 4px; font: inherit; color: var(--fg); background: var(--input); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; }
+  .ask .qa { font-size: .9em; margin-top: 2px; }
+  .ask .qa .qq { color: var(--muted); }
+  .perm.answered .q { display: none; }
   .perm .res.ok { color: var(--success); }
   .perm .res.no { color: var(--danger); }
 
@@ -214,7 +229,7 @@
   const bridge = window.openidea || { postMessage() {}, onMessage() {} };
   const post = (o) => bridge.postMessage(JSON.stringify(o));
   // Must equal PAGE_REV in src/lib.rs.
-  const REV = 4;
+  const REV = 5;
 
   let instructions = "";
   let busy = false, polling = false, ctxLabel = null, ctxOn = true, root = "";
@@ -411,7 +426,10 @@
       btns.appendChild(b);
     };
     choice("Allow", "allow", "allow");
-    if (ev.session) choice("Allow for this chat", "session", "session", "Don't ask again for this until the chat restarts");
+    if (ev.session) {
+      choice("Allow for this chat", "session", "session", "Don't ask again for this until the chat restarts");
+      choice("Always allow", "always", "always", "Don't ask again in this project (saved to .claude/settings.local.json, not committed)");
+    }
     choice("Deny", "deny", "deny");
     c.appendChild(btns);
     prompts.set(ev.id, c);
@@ -421,8 +439,89 @@
     scroll(true);
     btns.querySelector(".allow").focus({ preventScroll: true });
   }
+  function addQuestion(ev) {
+    if (prompts.has(ev.id)) return;
+    const qs = Array.isArray(ev.questions) ? ev.questions : [];
+    clearEmpty(); endText();
+    const c = el("div", "perm ask");
+    c.appendChild(el("div", "head", `<b>Claude has ${qs.length > 1 ? "some questions" : "a question"}</b>`));
+    const picks = qs.map(() => new Set());
+    const others = [];
+    const btns = el("div", "btns");
+    const submit = el("button", "allow", "Submit");
+    const ready = () => qs.every((q, i) => picks[i].size || others[i].value.trim());
+    const refresh = () => { submit.disabled = !ready(); };
+    qs.forEach((q, i) => {
+      const box = el("div", "q");
+      box.appendChild(el("div", "qtext", (q.header ? `<span class="tag">${esc(q.header)}</span>` : "") + esc(q.question)));
+      if (q.multiSelect) box.appendChild(el("div", "why", "Choose any that apply"));
+      const opts = el("div", "opts");
+      const mark = () => opts.querySelectorAll(".opt").forEach((x) => x.classList.toggle("on", picks[i].has(x.dataset.label)));
+      (q.options || []).forEach((o) => {
+        const b = el("button", "opt", `<span class="lbl">${esc(o.label)}</span>` + (o.description ? `<span class="desc">${esc(o.description)}</span>` : ""));
+        b.type = "button";
+        b.dataset.label = o.label;
+        b.onclick = () => {
+          if (q.multiSelect) { if (picks[i].has(o.label)) picks[i].delete(o.label); else picks[i].add(o.label); }
+          else { picks[i].clear(); picks[i].add(o.label); others[i].value = ""; }
+          mark(); refresh();
+        };
+        opts.appendChild(b);
+      });
+      box.appendChild(opts);
+      const other = el("input", "other");
+      other.placeholder = q.multiSelect ? "Other (added to your choices)…" : "Other…";
+      other.maxLength = 2000;
+      other.oninput = () => { if (!q.multiSelect && other.value.trim()) { picks[i].clear(); mark(); } refresh(); };
+      other.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing && ready()) { e.preventDefault(); submit.click(); } };
+      others.push(other);
+      box.appendChild(other);
+      c.appendChild(box);
+    });
+    const lock = () => { c.querySelectorAll("button, input").forEach((x) => (x.disabled = true)); };
+    submit.onclick = () => {
+      const answers = {};
+      qs.forEach((q, i) => {
+        const list = [...picks[i]];
+        const o = others[i].value.trim();
+        if (o) list.push(o);
+        answers[q.question] = q.multiSelect ? list : (list[0] || "");
+      });
+      lock();
+      post({ op: "answer", id: ev.id, answers });
+    };
+    const skip = el("button", "deny", "Skip");
+    skip.title = "Don't answer; Claude carries on without your choice";
+    skip.onclick = () => { lock(); post({ op: "permission", id: ev.id, decision: "deny" }); };
+    btns.append(submit, skip);
+    c.appendChild(btns);
+    refresh();
+    prompts.set(ev.id, c);
+    log.appendChild(c);
+    post({ op: "seen", id: ev.id });
+    setStatus("Waiting for your answer");
+    scroll(true);
+    const first = c.querySelector(".opt") || c.querySelector(".other");
+    if (first) first.focus({ preventScroll: true });
+  }
   function promptDone(ev) {
     let c = prompts.get(ev.id);
+    if (ev.question) {
+      if (!c) {
+        if (!ev.answers && !ev.name) return;
+        clearEmpty(); endText();
+        c = el("div", "perm ask", `<div class="head"><b>Claude asked</b></div>`);
+        log.appendChild(c);
+      }
+      prompts.delete(ev.id);
+      c.classList.add("answered");
+      Object.entries(ev.answers || {}).forEach(([q, a]) =>
+        c.appendChild(el("div", "qa", `<span class="qq">${esc(q)}</span> → <b>${esc(a)}</b>`)));
+      c.querySelector(".head").appendChild(el("span", "res " + (ev.t === "Answered" ? "ok" : "no"), esc(ev.t || "")));
+      if (!prompts.size && busy) setStatus("Working");
+      scroll();
+      return;
+    }
     if (!c) {
       // Replayed chat, or a prompt this page never saw.
       if (!ev.name) return;
@@ -472,6 +571,7 @@
       case "tool": addTool(ev); break;
       case "tool_result": toolResult(ev); break;
       case "permission": if (!replay) addPrompt(ev); break;
+      case "question": if (!replay) addQuestion(ev); break;
       case "permission_done": promptDone(ev); break;
       case "status": if (!replay) setStatus(ev.t); break;
       case "done": done(ev); break;

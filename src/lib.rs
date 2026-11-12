@@ -22,7 +22,7 @@ pub const VIEW: &str = "chat";
 const PROGRAM: &str = "claude";
 /// The page revision this component speaks to (`REV` in `web/index.html`).
 /// Bump both when the page must change along with the component.
-pub const PAGE_REV: u64 = 4;
+pub const PAGE_REV: u64 = 5;
 /// Polls (about 120 ms each while Claude waits) before a prompt the page has not
 /// confirmed showing is reported as stuck.
 const UNSEEN_POLLS: u32 = 25;
@@ -314,6 +314,23 @@ impl ClaudeSurf {
         Ok(())
     }
 
+    /// The person answered an AskUserQuestion card in the panel.
+    fn answer(&mut self, root: &str, msg: &Value) -> Result<(), Error> {
+        let id = msg["id"].as_str().unwrap_or("");
+        let s = self.session(root);
+        let Some((reply, ev)) = s.parser.answer_question(id, &msg["answers"]) else {
+            post(&json!({ "k": "events", "events": [{ "k": "permission_done", "id": id, "question": true, "t": "No longer pending" }], "busy": s.busy }));
+            return Ok(());
+        };
+        match s.child.as_ref() {
+            Some(child) => child.write(&reply)?,
+            None => return Err(Error::Invalid("Claude Code is not running".into())),
+        }
+        protocol::record(&mut s.transcript, ev.clone(), MAX_TRANSCRIPT);
+        post(&json!({ "k": "events", "events": [ev], "busy": s.busy }));
+        Ok(())
+    }
+
     fn stop(&mut self, root: &str) {
         let s = self.session(root);
         if let Some(c) = s.child.take() {
@@ -351,6 +368,7 @@ impl ClaudeSurf {
             "poll" => self.poll(&root)?,
             "stop" => self.stop(&root),
             "permission" => self.permission(&root, &msg)?,
+            "answer" => self.answer(&root, &msg)?,
             "seen" => {
                 let id = msg["id"].as_str().unwrap_or("").to_owned();
                 self.session(&root).seen.insert(id);

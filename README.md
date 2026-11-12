@@ -25,8 +25,11 @@ chat is a real multi-turn Claude Code session with your project as its working d
   Agent is never a default: you choose it in the panel, each time.
 - Permission prompts in the panel: when Claude Code wants approval (in any mode, including
   commands that Agent mode still asks about), a card shows the tool and what it will do, with
-  **Allow**, **Allow for this chat** (Claude Code's suggested rule, kept to the session, never
-  written to settings files) and **Deny**
+  **Allow**, **Allow for this chat** (Claude Code's suggested rule, kept to the session),
+  **Always allow** (the same rule saved to the project's `.claude/settings.local.json`, which
+  isn't committed) and **Deny**
+- Questions from Claude (AskUserQuestion) as a card: click an option (or several, when
+  Claude allows it), type your own under **Other**, or **Skip**; the answers go back to Claude
 - Model picker (default / Opus / Sonnet / Haiku, or any model id in Settings)
 - **Instructions** (top of the panel): extra text appended to Claude Code's system prompt
 - Conversations resume (`--resume`) after OpenIDEA unloads the idle plugin, or when you

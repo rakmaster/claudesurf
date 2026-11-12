@@ -1,6 +1,6 @@
 [package]
 name = "claudesurf"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 description = "A Windsurf-style Claude chat panel for OpenIDEA, driving the Claude Code CLI you are signed in to."
 license = "MIT"

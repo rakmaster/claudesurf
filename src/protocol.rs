@@ -94,6 +94,9 @@ pub enum Decision {
     Allow,
     /// Allow, and add Claude Code's suggested allow rules for the rest of this process.
     AllowSession,
+    /// Allow, and save Claude Code's suggested allow rules to the project's
+    /// `.claude/settings.local.json` (not committed), so this project never asks again.
+    AllowAlways,
     Deny,
 }
 
@@ -102,6 +105,7 @@ impl Decision {
         match s {
             "allow" => Some(Self::Allow),
             "session" => Some(Self::AllowSession),
+            "always" => Some(Self::AllowAlways),
             "deny" => Some(Self::Deny),
             _ => None,
         }
@@ -111,14 +115,15 @@ impl Decision {
         match self {
             Self::Allow => "Allowed",
             Self::AllowSession => "Allowed for this chat",
+            Self::AllowAlways => "Always allowed in this project",
             Self::Deny => "Denied",
         }
     }
 }
 
-/// Claude Code's suggested allow rules for a `can_use_tool` request, scoped to the session
-/// (never written to settings files).
-fn session_rules(request: &Value) -> Vec<Value> {
+/// Claude Code's suggested allow rules for a `can_use_tool` request, with `destination` set:
+/// "session" (this process only) or "localSettings" (the project's `.claude/settings.local.json`).
+fn suggested_rules(request: &Value, destination: &str) -> Vec<Value> {
     request
         .get("permission_suggestions")
         .and_then(Value::as_array)
@@ -127,12 +132,17 @@ fn session_rules(request: &Value) -> Vec<Value> {
                 .filter(|x| x["type"] == "addRules" && x["behavior"] == "allow")
                 .map(|x| {
                     let mut x = x.clone();
-                    x["destination"] = json!("session");
+                    x["destination"] = json!(destination);
                     x
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The suggested allow rules, scoped to the session (never written to settings files).
+fn session_rules(request: &Value) -> Vec<Value> {
+    suggested_rules(request, "session")
 }
 
 /// The stdin line answering `can_use_tool` request `id`.
@@ -144,6 +154,11 @@ pub fn permission_reply(id: &str, request: &Value, d: Decision) -> String {
         Decision::AllowSession => {
             json!({ "behavior": "allow", "updatedInput": input, "updatedPermissions": session_rules(request) })
         }
+        Decision::AllowAlways => json!({
+            "behavior": "allow",
+            "updatedInput": input,
+            "updatedPermissions": suggested_rules(request, "localSettings"),
+        }),
     };
     let msg = json!({
         "type": "control_response",
@@ -161,8 +176,90 @@ pub fn control_error(id: &str, error: &str) -> String {
     format!("{msg}\n")
 }
 
+/// Claude Code's tool for asking the person multiple-choice questions. It comes as a
+/// `can_use_tool` request and is answered by allowing it with `answers` added to its input.
+pub const ASK_TOOL: &str = "AskUserQuestion";
+/// Characters of one answer typed into "Other".
+pub const MAX_ANSWER_CHARS: usize = 2000;
+
+fn is_question(request: &Value) -> bool {
+    request.get("tool_name").and_then(Value::as_str) == Some(ASK_TOOL)
+}
+
+fn str_of<'a>(v: &'a Value, k: &str) -> &'a str {
+    v.get(k).and_then(Value::as_str).unwrap_or("")
+}
+
+/// The questions of an AskUserQuestion request, reduced to what the panel shows.
+fn questions(request: &Value) -> Vec<Value> {
+    request
+        .pointer("/input/questions")
+        .and_then(Value::as_array)
+        .map(|qs| {
+            qs.iter()
+                .filter(|q| !str_of(q, "question").is_empty())
+                .map(|q| {
+                    let options: Vec<Value> = q
+                        .get("options")
+                        .and_then(Value::as_array)
+                        .map(|o| {
+                            o.iter()
+                                .filter(|o| !str_of(o, "label").is_empty())
+                                .map(|o| json!({ "label": str_of(o, "label"), "description": str_of(o, "description") }))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    json!({
+                        "question": str_of(q, "question"),
+                        "header": str_of(q, "header"),
+                        "multiSelect": q.get("multiSelect").and_then(Value::as_bool).unwrap_or(false),
+                        "options": options,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The person's answers, keyed by question text: only questions that were asked,
+/// with a non-empty answer (several choices joined by ", "), trimmed and capped.
+fn clean_answers(request: &Value, answers: &Value) -> serde_json::Map<String, Value> {
+    let mut out = serde_json::Map::new();
+    for q in questions(request) {
+        let text = str_of(&q, "question");
+        let answer = match answers.get(text) {
+            Some(Value::String(a)) => a.trim().to_owned(),
+            Some(Value::Array(a)) => {
+                a.iter().filter_map(Value::as_str).map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>().join(", ")
+            }
+            _ => String::new(),
+        };
+        if !answer.is_empty() {
+            out.insert(text.to_owned(), Value::String(truncate(&answer, MAX_ANSWER_CHARS)));
+        }
+    }
+    out
+}
+
+/// The stdin line answering AskUserQuestion request `id`: allowed, with `answers` in its input.
+fn question_reply(id: &str, request: &Value, answers: &serde_json::Map<String, Value>) -> String {
+    let mut input = request.get("input").cloned().unwrap_or_else(|| json!({}));
+    if !input.is_object() {
+        input = json!({});
+    }
+    input["answers"] = Value::Object(answers.clone());
+    let msg = json!({
+        "type": "control_response",
+        "response": { "subtype": "success", "request_id": id, "response": { "behavior": "allow", "updatedInput": input } },
+    });
+    format!("{msg}\n")
+}
+
 /// The UI event asking the person about a `can_use_tool` request.
 fn permission_event(id: &str, request: &Value) -> Value {
+    if is_question(request) {
+        return json!({ "k": "question", "id": id, "questions": questions(request) });
+    }
     let name = request.get("tool_name").and_then(Value::as_str).unwrap_or("tool");
     let (title, path, detail) = tool_summary(name, request.get("input").unwrap_or(&Value::Null));
     json!({
@@ -278,6 +375,12 @@ pub fn tool_summary(name: &str, input: &Value) -> (String, Option<String>, Optio
         "WebFetch" => (s("url"), None, None),
         "WebSearch" => (s("query"), None, None),
         "Task" | "Agent" => (s("description"), None, None),
+        ASK_TOOL => {
+            let qs = input.get("questions").and_then(Value::as_array).cloned().unwrap_or_default();
+            let first = qs.first().map(|q| str_of(q, "question").to_owned()).unwrap_or_default();
+            let title = if qs.len() > 1 { format!("{first} (+{} more)", qs.len() - 1) } else { first };
+            (title, None, None)
+        }
         "TodoWrite" => {
             let todos = input.get("todos").and_then(Value::as_array).cloned().unwrap_or_default();
             let list = todos
@@ -465,7 +568,27 @@ impl Parser {
                 self.denied.insert(t.to_owned());
             }
         }
-        Some((permission_reply(&id, &req, d), permission_done(&id, &req, d.label())))
+        let how = if is_question(&req) && d == Decision::Deny { "Skipped" } else { d.label() };
+        Some((permission_reply(&id, &req, d), permission_done(&id, &req, how)))
+    }
+
+    /// Answers pending AskUserQuestion `id` with `answers` (question text → label, or a
+    /// list of labels): the stdin line and the UI event, or `None` when it is no longer
+    /// pending or isn't a question.
+    pub fn answer_question(&mut self, id: &str, answers: &Value) -> Option<(String, Value)> {
+        let i = self.prompts.iter().position(|(p, r)| p == id && is_question(r))?;
+        let (id, req) = self.prompts.remove(i);
+        let answers = clean_answers(&req, answers);
+        let reply = question_reply(&id, &req, &answers);
+        let done = json!({
+            "k": "permission_done",
+            "id": id,
+            "name": ASK_TOOL,
+            "question": true,
+            "t": "Answered",
+            "answers": answers,
+        });
+        Some((reply, done))
     }
 
     /// Forgets the prompts of a process that is gone.
@@ -536,7 +659,7 @@ impl Parser {
 fn permission_done(id: &str, request: &Value, how: &str) -> Value {
     let name = request.get("tool_name").and_then(Value::as_str).unwrap_or("tool");
     let (title, _, _) = tool_summary(name, request.get("input").unwrap_or(&Value::Null));
-    json!({ "k": "permission_done", "id": id, "name": name, "title": title, "t": how })
+    json!({ "k": "permission_done", "id": id, "name": name, "title": title, "t": how, "question": is_question(request) })
 }
 
 /// Splits complete lines off `buf`, leaving a trailing partial line in it.
@@ -559,7 +682,7 @@ pub fn record(transcript: &mut Vec<Value>, ev: Value, max: usize) {
             }
         }
     }
-    if matches!(ev["k"].as_str(), Some("status" | "log" | "permission")) {
+    if matches!(ev["k"].as_str(), Some("status" | "log" | "permission" | "question")) {
         return;
     }
     transcript.push(ev);
@@ -688,6 +811,73 @@ mod tests {
         assert_eq!(done["k"], "permission_done");
         assert_eq!(done["t"], "Allowed for this chat");
         assert!(p.answer("r1", Decision::Allow).is_none());
+    }
+
+    #[test]
+    fn always_allow_saves_the_suggested_rules_to_local_settings() {
+        let mut p = Parser::default();
+        p.feed(r#"{"type":"control_request","request_id":"r3","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"uv run pytest -q"},"tool_use_id":"t3","permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"uv run pytest:*"}],"behavior":"allow","destination":"session"},{"type":"setMode","mode":"acceptEdits","destination":"session"}]}}"#);
+
+        let (line, done) = p.answer("r3", Decision::AllowAlways).unwrap();
+        let v: Value = serde_json::from_str(line.trim()).unwrap();
+        let r = &v["response"]["response"];
+        assert_eq!(r["behavior"], "allow");
+        assert_eq!(r["updatedInput"]["command"], "uv run pytest -q");
+        // Only the allow rule (not the mode change), saved to the project's local settings.
+        let rules = r["updatedPermissions"].as_array().unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["destination"], "localSettings");
+        assert_eq!(rules[0]["rules"][0]["ruleContent"], "uv run pytest:*");
+        assert_eq!(done["t"], "Always allowed in this project");
+        assert_eq!(Decision::parse("always"), Some(Decision::AllowAlways));
+    }
+
+    const ASK: &str = r#"{"type":"control_request","request_id":"q1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"tq","input":{"questions":[{"question":"Which database?","header":"DB","multiSelect":false,"options":[{"label":"Postgres","description":"Relational"},{"label":"SQLite","description":"Embedded"}]},{"question":"Which features?","header":"Features","multiSelect":true,"options":[{"label":"Auth","description":""},{"label":"Search","description":""}]}]}}}"#;
+
+    #[test]
+    fn questions_are_shown_with_their_options() {
+        let mut p = Parser::default();
+        let ev = p.feed(ASK);
+        assert_eq!(ev[0]["k"], "question");
+        assert_eq!(ev[0]["questions"][0]["question"], "Which database?");
+        assert_eq!(ev[0]["questions"][0]["options"][1]["label"], "SQLite");
+        assert_eq!(ev[0]["questions"][1]["multiSelect"], true);
+        assert_eq!(p.prompt_events()[0]["k"], "question");
+    }
+
+    #[test]
+    fn answers_go_back_in_the_tool_input() {
+        let mut p = Parser::default();
+        p.feed(ASK);
+        let answers = json!({ "Which database?": "SQLite", "Which features?": ["Auth", " Search "], "Not asked": "x" });
+        assert!(p.answer_question("nope", &answers).is_none());
+        let (line, done) = p.answer_question("q1", &answers).unwrap();
+        let v: Value = serde_json::from_str(line.trim()).unwrap();
+        let r = &v["response"]["response"];
+        assert_eq!(v["response"]["request_id"], "q1");
+        assert_eq!(r["behavior"], "allow");
+        assert_eq!(r["updatedInput"]["questions"][0]["header"], "DB");
+        assert_eq!(r["updatedInput"]["answers"], json!({ "Which database?": "SQLite", "Which features?": "Auth, Search" }));
+        assert_eq!(done["t"], "Answered");
+        assert!(p.prompts.is_empty());
+    }
+
+    #[test]
+    fn skipping_a_question_denies_it() {
+        let mut p = Parser::default();
+        p.feed(ASK);
+        let (line, done) = p.answer("q1", Decision::Deny).unwrap();
+        assert!(line.contains(r#""behavior":"deny""#));
+        assert_eq!(done["t"], "Skipped");
+        assert_eq!(done["question"], true);
+    }
+
+    #[test]
+    fn permissions_are_not_answered_as_questions() {
+        let mut p = Parser::default();
+        p.feed(r#"{"type":"control_request","request_id":"r9","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}"#);
+        assert!(p.answer_question("r9", &json!({})).is_none());
+        assert_eq!(p.prompts.len(), 1);
     }
 
     #[test]
