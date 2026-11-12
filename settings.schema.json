@@ -1,11 +1,5 @@
 {
   "properties": {
-    "mode": {
-      "type": "string",
-      "title": "Default mode (plan: Chat, read-only · acceptEdits: Edit files · bypassPermissions: Agent, also runs commands)",
-      "enum": ["plan", "acceptEdits", "bypassPermissions", "default"],
-      "default": "acceptEdits"
-    },
     "model": {
       "type": "string",
       "title": "Default model (empty: Claude Code's default; e.g. opus, sonnet, haiku or a full model id)",
@@ -15,12 +9,6 @@
       "type": "boolean",
       "title": "Attach the active file and selection to messages by default",
       "default": true
-    },
-    "systemPrompt": {
-      "type": "string",
-      "multiline": true,
-      "title": "Extra system prompt (appended to Claude Code's)",
-      "default": "You are running inside the ClaudeSurf chat panel of the OpenIDEA IDE. Keep answers concise and use Markdown; reference files by their project-relative path."
     }
   }
 }

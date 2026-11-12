@@ -140,6 +140,16 @@
   .send { background: var(--accent); color: var(--on-accent); border: 0; border-radius: 5px; width: 28px; height: 26px; cursor: pointer; display: grid; place-items: center; }
   .send:disabled { opacity: .4; cursor: default; }
   .send.stop { background: var(--danger); }
+  select.agent { border-color: var(--warning); color: var(--warning); }
+
+  /* Instructions (system prompt) editor */
+  .instr { margin: 0 8px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); padding: 6px 8px; }
+  .instr .head { display: flex; align-items: baseline; gap: 6px; font-weight: 600; color: var(--strong); }
+  .instr .hint { font-size: .85em; color: var(--muted); margin: 2px 0 6px; }
+  .instr textarea { border: 1px solid var(--border); border-radius: 4px; background: var(--input); min-height: 90px; max-height: 30vh; resize: vertical; }
+  .instr .btns { display: flex; gap: 6px; margin-top: 6px; }
+  .instr .btns button { border: 1px solid var(--border); border-radius: 5px; padding: 2px 10px; cursor: pointer; background: none; }
+  .instr .btns .save { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
   .foot { font-size: .8em; color: var(--muted); padding: 0 10px 6px; display: flex; justify-content: space-between; gap: 8px; }
   .foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
@@ -151,11 +161,23 @@
       Claude
     </div>
     <div class="spacer"></div>
+    <button class="icon-btn" id="instrBtn" title="Extra instructions appended to Claude Code's system prompt">Instructions</button>
     <button class="icon-btn" id="newBtn" title="New chat">＋ New</button>
   </div>
 
   <div id="log"></div>
   <div class="status" id="status"></div>
+
+  <div class="instr" id="instr" hidden>
+    <div class="head">Instructions</div>
+    <div class="hint">Appended to Claude Code's system prompt for every project. Stored with the plugin, not in any project. Applies from your next message.</div>
+    <textarea id="instrText" rows="5" spellcheck="false"></textarea>
+    <div class="btns">
+      <button class="save" id="instrSave">Save</button>
+      <button id="instrReset" title="Use ClaudeSurf's built-in instructions">Reset to default</button>
+      <button id="instrCancel">Cancel</button>
+    </div>
+  </div>
 
   <div class="composer">
     <div class="ctxrow" id="ctxrow" hidden>
@@ -163,7 +185,7 @@
     </div>
     <textarea id="input" rows="2" placeholder="Ask Claude anything — ⏎ to send, ⇧⏎ for a new line"></textarea>
     <div class="controls">
-      <select id="mode" title="What Claude may do">
+      <select id="mode" title="What Claude may do. Each panel starts in your last mode other than Agent; Agent is chosen here, each time.">
         <option value="plan">Chat — read-only</option>
         <option value="acceptEdits">Edit — changes files</option>
         <option value="bypassPermissions">Agent — files &amp; commands</option>
@@ -192,8 +214,9 @@
   const bridge = window.openidea || { postMessage() {}, onMessage() {} };
   const post = (o) => bridge.postMessage(JSON.stringify(o));
   // Must equal PAGE_REV in src/lib.rs.
-  const REV = 3;
+  const REV = 4;
 
+  let instructions = "";
   let busy = false, polling = false, ctxLabel = null, ctxOn = true, root = "";
   let current = null;            // { el, text } of the streaming assistant message
   const tools = new Map();       // tool_use id -> status element
@@ -429,7 +452,7 @@
     if (ev.denials && ev.denials.length) {
       const names = [...new Set(ev.denials)].join(", ");
       const btn = el("button", null, "Switch to Agent mode");
-      btn.onclick = () => { modeSel.value = "bypassPermissions"; btn.disabled = true; input.focus(); };
+      btn.onclick = () => { modeSel.value = "bypassPermissions"; modeChanged(); btn.disabled = true; input.focus(); };
       note(`Not allowed in this mode: ${names}.`, "warn", modeSel.value === "bypassPermissions" ? null : btn);
     }
     const parts = [];
@@ -512,7 +535,9 @@
       case "hello":
         root = m.root || "";
         log.innerHTML = ""; tools.clear(); prompts.clear(); current = null;
-        if (m.mode) modeSel.value = m.mode;
+        // The plugin never starts a panel in Agent mode.
+        modeSel.value = m.mode && m.mode !== "bypassPermissions" ? m.mode : "acceptEdits";
+        modeChanged();
         if (m.model) {
           if (![...modelSel.options].some((o) => o.value === m.model)) modelSel.add(new Option(m.model, m.model));
           modelSel.value = m.model;
@@ -542,6 +567,11 @@
       case "context":
         setContext(m.context);
         break;
+      case "instructions":
+        instructions = typeof m.text === "string" ? m.text : "";
+        $("instrText").value = instructions;
+        $("instr").hidden = true;
+        break;
       case "focus":
         if (m.context) { ctxOn = true; setContext(m.context); }
         input.focus();
@@ -559,6 +589,19 @@
   input.addEventListener("focus", () => post({ op: "context" }));
   sendBtn.onclick = send;
   $("newBtn").onclick = () => { if (!busy || confirm("Stop Claude and start a new chat?")) post({ op: "new" }); };
+  function modeChanged() {
+    const agent = modeSel.value === "bypassPermissions";
+    modeSel.classList.toggle("agent", agent);
+  }
+  modeSel.addEventListener("change", modeChanged);
+  $("instrBtn").onclick = () => {
+    const box = $("instr");
+    box.hidden = !box.hidden;
+    if (!box.hidden) { $("instrText").value = instructions; $("instrText").focus(); }
+  };
+  $("instrSave").onclick = () => post({ op: "instructions", text: $("instrText").value });
+  $("instrReset").onclick = () => post({ op: "instructions", reset: true });
+  $("instrCancel").onclick = () => { $("instrText").value = instructions; $("instr").hidden = true; };
   $("ctxToggle").onclick = () => { ctxOn = !ctxOn; setContext(ctxLabel); };
   log.addEventListener("click", (e) => {
     const web = e.target.closest("a[href]");

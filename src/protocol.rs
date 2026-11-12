@@ -20,6 +20,22 @@ pub fn sanitize_mode(mode: &str) -> &str {
     MODES.iter().copied().find(|m| *m == mode).unwrap_or("acceptEdits")
 }
 
+/// Modes a panel session may start in. Agent (`bypassPermissions`) is not one:
+/// the person picks it in the panel each time, so nothing stored or configured
+/// can make Claude run commands without asking.
+pub const START_MODES: [&str; 3] = ["plan", "acceptEdits", "default"];
+
+/// The mode a panel session starts in: the person's last non-Agent pick, else `acceptEdits`.
+pub fn start_mode(last: Option<&str>) -> &str {
+    last.and_then(|l| START_MODES.iter().copied().find(|m| *m == l)).unwrap_or("acceptEdits")
+}
+
+/// Appended to Claude Code's system prompt unless the person changes it in the panel.
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are running inside the ClaudeSurf chat panel of the OpenIDEA IDE. Keep answers concise and use Markdown; reference files by their project-relative path.";
+
+/// Longest custom system prompt kept, in characters.
+pub const MAX_SYSTEM_PROMPT_CHARS: usize = 20_000;
+
 /// A model alias or id: letters, digits and `.-_[]`, at most 100 characters.
 pub fn sanitize_model(model: &str) -> String {
     let m = model.trim();
@@ -567,6 +583,15 @@ mod tests {
         let b = claude_args("plan", "claude-opus-5-5[1m]", None, "");
         assert!(b.windows(2).any(|w| w == ["--model", "claude-opus-5-5[1m]"]));
         assert!(!b.contains(&"--resume".to_string()));
+    }
+
+    #[test]
+    fn agent_mode_is_never_a_start_mode() {
+        assert_eq!(start_mode(None), "acceptEdits");
+        assert_eq!(start_mode(Some("plan")), "plan");
+        assert_eq!(start_mode(Some("default")), "default");
+        assert_eq!(start_mode(Some("bypassPermissions")), "acceptEdits");
+        assert_eq!(start_mode(Some("nonsense")), "acceptEdits");
     }
 
     #[test]

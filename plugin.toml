@@ -1,12 +1,12 @@
 # OpenIDEA plugin: ClaudeSurf — a Claude chat panel in the style of Windsurf's.
 id = "rakmaster.claudesurf"
 name = "ClaudeSurf"
-version = "0.1.2"
+version = "0.1.3"
 description = "A Claude chat panel docked beside the editor, in the style of Windsurf's. It drives the Claude Code CLI you are already signed in to (no API key): streaming answers, file edits and tool calls shown inline, the active file and selection as context, and sessions that resume. Community plugin; not affiliated with Anthropic or Windsurf."
 authors = ["rakmaster"]
 homepage = "https://github.com/rakmaster/claudesurf"
 license = "MIT"
-change-notes = "0.1.2 — Links in answers open in your browser, and bare http(s) URLs become links. 0.1.1 — Permission prompts in the panel: Allow, Allow for this chat, or Deny when Claude Code asks for approval (before, such requests were denied automatically). 0.1.0 — First release: chat panel, streaming, tool cards with clickable files, Chat / Edit / Agent modes, model choice, selection as context, resumable sessions."
+change-notes = "0.1.3 — Safer defaults: each panel starts in your last mode other than Agent (Edit at first), and Agent is chosen in the panel, never by a setting. The permission mode and system prompt are no longer settings, so a project's .openidea/settings.toml can't change them; edit the instructions with the panel's Instructions button (a custom prompt set in Settings before 0.1.3 isn't carried over). 0.1.2 — Links in answers open in your browser, and bare http(s) URLs become links. 0.1.1 — Permission prompts in the panel: Allow, Allow for this chat, or Deny when Claude Code asks for approval (before, such requests were denied automatically). 0.1.0 — First release: chat panel, streaming, tool cards with clickable files, Chat / Edit / Agent modes, model choice, selection as context, resumable sessions."
 categories = ["ai", "tools"]
 icon = "icons/icon.svg"
 icon-dark = "icons/icon_dark.svg"

@@ -20,11 +20,15 @@ chat is a real multi-turn Claude Code session with your project as its working d
   - **Edit**: may change files (`acceptEdits`)
   - **Agent**: may change files and run commands without asking (`bypassPermissions`)
   - **Ask**: Claude Code's own defaults; anything that needs approval is asked in the panel
+
+  Each panel starts in the last mode you picked other than Agent (Edit the first time).
+  Agent is never a default: you choose it in the panel, each time.
 - Permission prompts in the panel: when Claude Code wants approval (in any mode, including
   commands that Agent mode still asks about), a card shows the tool and what it will do, with
   **Allow**, **Allow for this chat** (Claude Code's suggested rule, kept to the session, never
   written to settings files) and **Deny**
 - Model picker (default / Opus / Sonnet / Haiku, or any model id in Settings)
+- **Instructions** (top of the panel): extra text appended to Claude Code's system prompt
 - Conversations resume (`--resume`) after OpenIDEA unloads the idle plugin, or when you
   switch mode or model
 - Commands: *ClaudeSurf: Open Chat*, *New Chat*, *Ask Claude About Selection*
@@ -45,8 +49,23 @@ OpenIDEA asks you to grant these when you install the plugin:
 | `process:claude` | high | Runs the Claude Code CLI in your project folder; it is the whole chat. Claude Code can read your project and, depending on the mode you pick, edit files (**Edit**) or also run shell commands without asking (**Agent**). In **Chat** mode it is read-only. OpenIDEA pins the grant to the exact `claude` binary, so after Claude Code updates itself you are asked to approve the new binary. |
 | `project.read` | low | Finds the project root (Claude's working directory) and turns file paths into project-relative ones. |
 | `editor.read` | low | Reads the active file's path and your selection to attach as context. Nothing is sent unless the context chip is on. |
-| `storage` | low | Keeps the chat transcript and Claude's session id per project, so the chat survives the plugin being unloaded. |
+| `storage` | low | Keeps the chat transcript and Claude's session id per project, so the chat survives the plugin being unloaded, plus your last mode and your Instructions. |
 | `clipboard` (optional) | medium | The Copy button on code blocks. |
+
+### Settings and what a project can change
+
+Settings › Plugins › ClaudeSurf has the default **model** and whether to **attach context**.
+A project can override these in its `.openidea/settings.toml`. The permission mode and the
+Instructions are deliberately not settings, so a repository you open can't change them: they
+live in the plugin's own storage, and you change them only in the panel.
+
+### Repositories you don't trust
+
+`claude -p` doesn't show Claude Code's workspace trust prompt. As soon as the panel starts a
+session (your first message), Claude Code loads the project's `.claude/settings.json` and
+`.claude/settings.local.json`, including any **hooks** defined there, which run shell commands without asking in every mode, Chat included. Before chatting
+in a repository you don't trust, look at those files, or open it in `claude` in a terminal
+first and answer the trust prompt there.
 
 The plugin makes no network requests itself. Your messages go to Anthropic through Claude
 Code, under your Claude Code account and settings.

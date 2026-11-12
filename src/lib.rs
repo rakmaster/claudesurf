@@ -22,18 +22,24 @@ pub const VIEW: &str = "chat";
 const PROGRAM: &str = "claude";
 /// The page revision this component speaks to (`REV` in `web/index.html`).
 /// Bump both when the page must change along with the component.
-pub const PAGE_REV: u64 = 3;
+pub const PAGE_REV: u64 = 4;
 /// Polls (about 120 ms each while Claude waits) before a prompt the page has not
 /// confirmed showing is reported as stuck.
 const UNSEEN_POLLS: u32 = 25;
 /// UI events kept per project, replayed when the panel opens again.
 const MAX_TRANSCRIPT: usize = 3000;
+/// Plugin storage (the user's data folder, never the project) for the person's
+/// last mode and their system prompt. These are deliberately not settings: a
+/// project's `.openidea/settings.toml` overrides settings, and a cloned
+/// repository must not choose the permission mode or Claude's instructions.
+const PREF_MODE: &str = "pref:mode";
+const PREF_SYSTEM_PROMPT: &str = "pref:systemPrompt";
 
 #[derive(Default)]
 struct Session {
     child: Option<Child>,
-    /// Mode and model the running process was started with.
-    cfg: (String, String),
+    /// Mode, model and system prompt the running process was started with.
+    cfg: (String, String, String),
     buf: String,
     stderr: String,
     parser: Parser,
@@ -63,6 +69,19 @@ fn post(ev: &Value) {
 
 fn setting_str(key: &str) -> String {
     host::setting_string(key).unwrap_or_default()
+}
+
+/// The system prompt the person set in the panel, else the built-in one.
+fn system_prompt() -> (String, bool) {
+    match host::storage::get(PREF_SYSTEM_PROMPT) {
+        Ok(Some(p)) => (p, true),
+        _ => (protocol::DEFAULT_SYSTEM_PROMPT.to_owned(), false),
+    }
+}
+
+fn post_instructions() {
+    let (text, custom) = system_prompt();
+    post(&json!({ "k": "instructions", "text": text, "custom": custom, "default": protocol::DEFAULT_SYSTEM_PROMPT }));
 }
 
 fn project_root(ctx: &Invocation) -> String {
@@ -122,11 +141,13 @@ impl ClaudeSurf {
             "transcript": s.transcript,
             "prompts": s.parser.prompt_events(),
             "rev": PAGE_REV,
-            "mode": protocol::sanitize_mode(&setting_str("mode")),
+            // Never Agent: that is picked in the panel, per session.
+            "mode": protocol::start_mode(host::storage::get(PREF_MODE).ok().flatten().as_deref()),
             "model": setting_str("model"),
             "includeContext": host::setting_bool("includeContext").unwrap_or(true),
             "context": context,
         }));
+        post_instructions();
     }
 
     fn send(&mut self, root: &str, ctx: &Invocation, msg: &Value) -> Result<(), Error> {
@@ -138,7 +159,7 @@ impl ClaudeSurf {
         let model = protocol::sanitize_model(msg["model"].as_str().unwrap_or(""));
         let want_context = msg["ctx"].as_bool().unwrap_or(true);
         let current = if want_context { editor_context(ctx, root) } else { None };
-        let system = setting_str("systemPrompt");
+        let (system, _) = system_prompt();
         let project = ctx.project();
 
         let s = self.session(root);
@@ -163,9 +184,10 @@ impl ClaudeSurf {
             pending.or(current)
         };
         let prompt = protocol::with_context(&text, context.as_ref());
-        // A finished process, or one started with another mode or model, is replaced.
+        // A finished process, or one started with another mode, model or prompt, is replaced.
         let alive = s.child.as_ref().is_some_and(|c| c.wait(0).map(|ch| ch.status.is_none()).unwrap_or(false));
-        if !alive || s.cfg != (mode.clone(), model.clone()) {
+        let cfg = (mode.clone(), model.clone(), system.clone());
+        if !alive || s.cfg != cfg {
             if let Some(c) = s.child.take() {
                 let _ = c.kill();
             }
@@ -189,7 +211,10 @@ impl ClaudeSurf {
                     return Ok(());
                 }
             }
-            s.cfg = (mode, model);
+            s.cfg = cfg;
+        }
+        if protocol::START_MODES.contains(&mode.as_str()) {
+            let _ = host::storage::set(PREF_MODE, &mode);
         }
         let child = s.child.as_ref().expect("started above");
         child.write(&protocol::user_message(&prompt))?;
@@ -331,6 +356,14 @@ impl ClaudeSurf {
                 self.session(&root).seen.insert(id);
             }
             "new" => self.reset(&root),
+            "instructions" => {
+                if msg["reset"].as_bool() == Some(true) {
+                    host::storage::delete(PREF_SYSTEM_PROMPT)?;
+                } else if let Some(text) = msg["text"].as_str() {
+                    host::storage::set(PREF_SYSTEM_PROMPT, &protocol::truncate(text.trim(), protocol::MAX_SYSTEM_PROMPT_CHARS))?;
+                }
+                post_instructions();
+            }
             "context" => {
                 let c = editor_context(ctx, &root).map(|c| c.label());
                 post(&json!({ "k": "context", "context": c }));
