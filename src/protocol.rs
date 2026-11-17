@@ -79,13 +79,104 @@ pub fn claude_args(mode: &str, model: &str, resume: Option<&str>, system_prompt:
     args
 }
 
-/// One line for Claude's stdin carrying a user turn.
-pub fn user_message(text: &str) -> String {
-    let msg = json!({
+/// Images attached to one message, at most.
+pub const MAX_IMAGES: usize = 5;
+/// Base64 characters of one image (the API takes up to 5 MB per image).
+pub const MAX_IMAGE_B64: usize = 5_000_000;
+/// Base64 characters of a stored thumbnail (kept in the transcript for display).
+pub const MAX_THUMB_B64: usize = 40_000;
+const IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+/// An image pasted or dropped into the composer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Image {
+    pub media_type: String,
+    /// Base64 of the image bytes.
+    pub data: String,
+    /// A small `data:` URL the page shows on the sent message.
+    pub thumb: Option<String>,
+}
+
+fn is_base64(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+}
+
+impl Image {
+    /// An image the page sent: a supported type and plain base64 within the limits.
+    pub fn from_json(v: &Value) -> Option<Self> {
+        let media_type = v["mediaType"].as_str()?;
+        let data = v["data"].as_str()?;
+        if !IMAGE_TYPES.contains(&media_type) || data.len() > MAX_IMAGE_B64 || !is_base64(data) {
+            return None;
+        }
+        let thumb = v["thumb"].as_str().filter(|t| {
+            t.len() <= MAX_THUMB_B64
+                && IMAGE_TYPES.iter().any(|m| t.strip_prefix("data:").and_then(|r| r.strip_prefix(m)).is_some_and(|r| r.starts_with(";base64,") && is_base64(&r[8..])))
+        });
+        Some(Image { media_type: media_type.to_owned(), data: data.to_owned(), thumb: thumb.map(str::to_owned) })
+    }
+}
+
+/// One line for Claude's stdin carrying a user turn. Claude Code keeps `uuid` as
+/// the message's id, which names its file checkpoint for [`rewind_request`].
+pub fn user_message(text: &str, uuid: Option<&str>, images: &[Image]) -> String {
+    let mut content: Vec<Value> = images
+        .iter()
+        .map(|i| json!({ "type": "image", "source": { "type": "base64", "media_type": i.media_type, "data": i.data } }))
+        .collect();
+    content.push(json!({ "type": "text", "text": text }));
+    let mut msg = json!({
         "type": "user",
-        "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
+        "message": { "role": "user", "content": content },
+    });
+    if let Some(u) = uuid {
+        msg["uuid"] = json!(u);
+    }
+    format!("{msg}\n")
+}
+
+/// Turns on Claude Code's file checkpoints in `-p` mode (needed for rewinding).
+pub const CHECKPOINT_ENV: &str = "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING";
+
+/// A UUID in the usual 8-4-4-4-12 hex form.
+pub fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && parts.iter().zip([8, 4, 4, 4, 12]).all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// The stdin line asking Claude Code to restore the files it changed since user
+/// message `uuid` (`dry_run`: only report what would change).
+pub fn rewind_request(uuid: &str, dry_run: bool) -> String {
+    let id = format!("rewind:{}:{uuid}", if dry_run { "dry" } else { "go" });
+    let msg = json!({
+        "type": "control_request",
+        "request_id": id,
+        "request": { "subtype": "rewind_files", "user_message_id": uuid, "dry_run": dry_run },
     });
     format!("{msg}\n")
+}
+
+/// The UI event for Claude Code's answer to a [`rewind_request`].
+fn rewind_event(id: &str, v: &Value) -> Value {
+    let mut parts = id.splitn(3, ':').skip(1);
+    let dry = parts.next() == Some("dry");
+    let uuid = parts.next().unwrap_or("");
+    let resp = v.get("response").unwrap_or(&Value::Null);
+    let ok_reply = resp["subtype"] == "success";
+    let body = resp.get("response").unwrap_or(&Value::Null);
+    let ok = ok_reply && body["canRewind"].as_bool().unwrap_or(false);
+    let error = if ok_reply { body.get("error").cloned().unwrap_or(Value::Null) } else { resp.get("error").cloned().unwrap_or(Value::Null) };
+    json!({
+        "k": "rewind",
+        "uuid": uuid,
+        "dry": dry,
+        "ok": ok,
+        "error": error,
+        "files": body.get("filesChanged").cloned().unwrap_or(json!([])),
+        "insertions": body.get("insertions"),
+        "deletions": body.get("deletions"),
+    })
 }
 
 /// How the person answered a permission prompt.
@@ -294,17 +385,315 @@ impl EditorContext {
     }
 }
 
-/// The text sent to Claude: the user's, preceded by the editor context.
-pub fn with_context(text: &str, ctx: Option<&EditorContext>) -> String {
-    let Some(ctx) = ctx else { return text.to_owned() };
-    let mut out = format!("<ide_context>\nActive file in the editor: {}\n", ctx.path);
-    if let Some((a, b, sel)) = &ctx.selection {
-        let fence = if sel.contains("```") { "~~~~" } else { "```" };
-        out.push_str(&format!("Selected lines {a}-{b}:\n{fence}\n{sel}\n{fence}\n"));
+/// The text sent to Claude: the user's, preceded by the editor context and
+/// what they @-mentioned.
+pub fn with_context(text: &str, ctx: Option<&EditorContext>, mentions: &[Mention]) -> String {
+    if ctx.is_none() && mentions.is_empty() {
+        return text.to_owned();
+    }
+    let fence = |s: &str| if s.contains("```") { "~~~~" } else { "```" };
+    let mut out = String::from("<ide_context>\n");
+    if let Some(ctx) = ctx {
+        out.push_str(&format!("Active file in the editor: {}\n", ctx.path));
+        if let Some((a, b, sel)) = &ctx.selection {
+            let f = fence(sel);
+            out.push_str(&format!("Selected lines {a}-{b}:\n{f}\n{sel}\n{f}\n"));
+        }
+    }
+    if !mentions.is_empty() {
+        out.push_str("The user @-mentioned (paths are project-relative):\n");
+        for m in mentions {
+            match (&m.kind, &m.contents) {
+                (MentionKind::File, Some(Ok(text))) => {
+                    let f = fence(text);
+                    out.push_str(&format!("File {}:\n{f}\n{text}\n{f}\n", m.path));
+                }
+                (MentionKind::File, Some(Err(why))) => out.push_str(&format!("File {} ({why})\n", m.path)),
+                (MentionKind::File, None) => out.push_str(&format!("File {}\n", m.path)),
+                (MentionKind::Dir, _) => out.push_str(&format!("Folder {}\n", m.path)),
+                (MentionKind::Symbol, _) => {
+                    out.push_str(&format!("Symbol `{}` at {}:{}\n", m.name, m.path, m.line));
+                }
+            }
+        }
     }
     out.push_str("</ide_context>\n\n");
     out.push_str(text);
     out
+}
+
+/// Command names a slash command may have (`name`, `plugin:name`, `dir:name`).
+fn is_command_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 100
+        && !s.starts_with("__")
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_:.".contains(c))
+}
+
+/// The slash commands Claude Code's `init` message lists, deduplicated, without
+/// internal ones.
+pub fn slash_commands(init: &Value) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for key in ["slash_commands", "skills"] {
+        for name in init.get(key).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            if is_command_name(name) && !out.iter().any(|n| n == name) {
+                out.push(name.to_owned());
+            }
+        }
+    }
+    out
+}
+
+/// The name and description of a project command or skill file:
+/// `.claude/commands/git/push.md` is `git:push`, `.claude/skills/x/SKILL.md` is `x`.
+/// The description is the frontmatter `description:`, else the first line of text.
+pub fn command_info(rel_path: &str, text: &str) -> Option<(String, String)> {
+    let name = if let Some(rest) = rel_path.strip_prefix(".claude/commands/") {
+        rest.strip_suffix(".md")?.replace('/', ":")
+    } else {
+        let rest = rel_path.strip_prefix(".claude/skills/")?.strip_suffix("/SKILL.md")?;
+        if rest.contains('/') {
+            return None;
+        }
+        rest.to_owned()
+    };
+    if !is_command_name(&name) {
+        return None;
+    }
+    let mut body = text;
+    let mut description = None;
+    if let Some(rest) = text.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            for line in rest[..end].lines() {
+                if let Some(d) = line.trim().strip_prefix("description:") {
+                    description = Some(d.trim().trim_matches(|c| c == '"' || c == '\'').to_owned());
+                }
+            }
+            body = &rest[end + 4..];
+        }
+    }
+    let description = description
+        .filter(|d| !d.is_empty())
+        .or_else(|| body.lines().map(str::trim).find(|l| !l.is_empty()).map(|l| l.trim_start_matches('#').trim().to_owned()))
+        .unwrap_or_default();
+    let description: String = description.chars().filter(|c| !c.is_control()).take(160).collect();
+    Some((name, description))
+}
+
+/// Project files Claude Code reads as instructions ("rules and memory").
+pub const RULE_GLOBS: [&str; 3] = ["**/CLAUDE.md", "**/CLAUDE.local.md", ".claude/rules/**/*.md"];
+
+/// Where a rule file sits in the list: root files first, then `.claude/`, then nested ones.
+pub fn rule_rank(rel: &str) -> (u8, String) {
+    let rank = match rel {
+        "CLAUDE.md" => 0,
+        "CLAUDE.local.md" => 1,
+        ".claude/CLAUDE.md" => 2,
+        r if r.starts_with(".claude/rules/") => 3,
+        _ => 4,
+    };
+    (rank, rel.to_owned())
+}
+
+/// The user's global `CLAUDE.md`, from Claude's auto-memory folder
+/// (`<home>/.claude/projects/<project>/memory/`).
+pub fn global_claude_md(memory_dir: &str) -> Option<String> {
+    let i = memory_dir.find("/.claude/projects/")?;
+    Some(format!("{}/.claude/CLAUDE.md", &memory_dir[..i]))
+}
+
+/// Chats kept per project; the least recently used beyond this are dropped.
+pub const MAX_CHATS: usize = 50;
+/// Characters of a chat's messages kept in the index for searching history.
+pub const CHAT_SEARCH_CHARS: usize = 2000;
+
+/// A chat's title: the first line of its first message, shortened.
+pub fn chat_title(text: &str) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    match line.char_indices().nth(60) {
+        Some((i, _)) => format!("{}…", line[..i].trim_end()),
+        None => if line.is_empty() { "Untitled chat".into() } else { line },
+    }
+}
+
+/// Records a message in the chat history index (newest first): creates the
+/// entry for `id` or updates its time, session and search text. Returns the ids
+/// of chats dropped to stay within `max`.
+pub fn touch_chat(index: &mut Vec<Value>, id: &str, text: Option<&str>, session: Option<&str>, now: u64, max: usize) -> Vec<String> {
+    let pos = index.iter().position(|c| c["id"] == id);
+    let mut entry = match pos {
+        Some(i) => index.remove(i),
+        None => json!({ "id": id, "title": chat_title(text.unwrap_or("")), "search": "" }),
+    };
+    if now > 0 {
+        entry["updated"] = json!(now);
+    }
+    if let Some(s) = session {
+        entry["session"] = json!(s);
+    }
+    if let Some(t) = text {
+        let have = entry["search"].as_str().unwrap_or("");
+        let room = CHAT_SEARCH_CHARS.saturating_sub(have.chars().count());
+        if room > 1 {
+            let add: String = t.chars().take(room - 1).collect();
+            entry["search"] = json!(if have.is_empty() { add } else { format!("{have}\n{add}") });
+        }
+    }
+    index.insert(0, entry);
+    index.split_off(max.min(index.len())).into_iter().filter_map(|c| c["id"].as_str().map(str::to_owned)).collect()
+}
+
+/// A title for a chat from before history existed: its first user message.
+pub fn title_of_transcript(transcript: &[Value]) -> String {
+    chat_title(transcript.iter().find(|e| e["k"] == "user").and_then(|e| e["t"].as_str()).unwrap_or(""))
+}
+
+/// Mentions attached to one message, at most.
+pub const MAX_MENTIONS: usize = 20;
+/// Characters of one mentioned file included in the prompt; a larger file is
+/// named only, for Claude to read itself.
+pub const MAX_MENTION_FILE_CHARS: usize = 40_000;
+/// Characters of mentioned files included in one prompt, together.
+pub const MAX_MENTION_TOTAL_CHARS: usize = 120_000;
+/// Project files listed for the @ picker.
+pub const MAX_MENTION_FILES: u32 = 20_000;
+/// Suggestions shown in the @ picker.
+pub const MENTION_RESULTS: usize = 12;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MentionKind {
+    File,
+    Dir,
+    Symbol,
+}
+
+/// Something the person picked with @ in the composer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mention {
+    pub kind: MentionKind,
+    /// Project-relative; a folder ends with `/`.
+    pub path: String,
+    /// 1-based line of a symbol.
+    pub line: u32,
+    /// A symbol's name.
+    pub name: String,
+    /// A file's text, or why it isn't included.
+    pub contents: Option<Result<String, String>>,
+}
+
+impl Mention {
+    /// A mention the page sent, if it is well-formed and stays inside the project.
+    pub fn from_json(v: &Value) -> Option<Self> {
+        let kind = match v["kind"].as_str()? {
+            "file" => MentionKind::File,
+            "dir" => MentionKind::Dir,
+            "symbol" => MentionKind::Symbol,
+            _ => return None,
+        };
+        let path = v["path"].as_str()?;
+        if !is_safe_relative(path) {
+            return None;
+        }
+        let name: String = v["name"].as_str().unwrap_or("").chars().filter(|c| !c.is_control()).take(200).collect();
+        let line = v["line"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
+        if kind == MentionKind::Symbol && name.is_empty() {
+            return None;
+        }
+        Some(Mention { kind, path: path.to_owned(), line, name, contents: None })
+    }
+
+    /// How the page shows it on the sent message.
+    pub fn label(&self) -> String {
+        match self.kind {
+            MentionKind::Symbol => format!("{} ({}:{})", self.name, self.path, self.line),
+            _ => self.path.clone(),
+        }
+    }
+}
+
+/// A project-relative path with no way out of the project.
+pub fn is_safe_relative(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 1024
+        && !path.starts_with('/')
+        && !path.starts_with('~')
+        && !path.contains('\\')
+        && !path.chars().any(char::is_control)
+        && !path.split('/').any(|seg| seg == "..")
+        && !(path.len() > 1 && path.as_bytes()[1] == b':')
+}
+
+/// Project-relative files plus every folder that holds them (ending in `/`),
+/// sorted: what the @ picker searches.
+pub fn mention_candidates(root: &str, files: &[String]) -> Vec<String> {
+    let mut all = std::collections::BTreeSet::new();
+    for f in files {
+        let rel = relative(f, root);
+        if rel.starts_with('/') {
+            continue;
+        }
+        let mut end = 0;
+        while let Some(i) = rel[end..].find('/') {
+            end += i + 1;
+            all.insert(rel[..end].to_owned());
+        }
+        all.insert(rel.to_owned());
+    }
+    all.into_iter().collect()
+}
+
+/// How well `query` fuzzy-matches `path` (higher is better), or `None`.
+/// Letters must appear in order; matches in the file name, at the start of a
+/// word and in runs score more, and shorter paths win ties.
+pub fn fuzzy_score(query: &str, path: &str) -> Option<i64> {
+    let q: Vec<char> = query.chars().flat_map(char::to_lowercase).filter(|c| !c.is_whitespace()).collect();
+    let trimmed = path.trim_end_matches('/');
+    let name_start = trimmed.rfind('/').map_or(0, |i| i + 1);
+    let p: Vec<(usize, char)> = path.char_indices().collect();
+    if q.is_empty() {
+        return Some(-(path.len() as i64));
+    }
+    // Best of: matching inside the name only, or anywhere in the path.
+    let attempt = |from: usize| -> Option<i64> {
+        let mut score = 0i64;
+        let mut qi = 0;
+        let mut prev: Option<usize> = None;
+        for (k, &(byte, c)) in p.iter().enumerate() {
+            if byte < from || qi == q.len() {
+                continue;
+            }
+            if c.to_lowercase().eq(std::iter::once(q[qi])) {
+                score += 1;
+                let boundary = k == 0 || matches!(p[k - 1].1, '/' | '_' | '-' | '.' | ' ') || (c.is_uppercase() && p[k - 1].1.is_lowercase());
+                if boundary {
+                    score += 6;
+                }
+                if prev == Some(k.wrapping_sub(1)) {
+                    score += 4;
+                }
+                if byte >= name_start {
+                    score += 3;
+                }
+                prev = Some(k);
+                qi += 1;
+            }
+        }
+        (qi == q.len()).then_some(score)
+    };
+    let in_name = attempt(name_start).map(|s| s + 20);
+    let anywhere = attempt(0);
+    let best = in_name.max(anywhere)?;
+    let exact = path.trim_end_matches('/')[name_start..].eq_ignore_ascii_case(query.trim());
+    Some(best * 10 + if exact { 500 } else { 0 } - path.len() as i64)
+}
+
+/// The best `limit` of `candidates` for `query`.
+pub fn rank_mentions<'a>(candidates: &'a [String], query: &str, limit: usize) -> Vec<&'a str> {
+    let mut scored: Vec<(i64, &str)> =
+        candidates.iter().filter_map(|c| fuzzy_score(query, c).map(|s| (s, c.as_str()))).collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+    scored.into_iter().take(limit).map(|(_, c)| c).collect()
 }
 
 /// `path` relative to `root` when inside it.
@@ -475,6 +864,10 @@ impl Parser {
                     "session": self.session_id,
                     "model": self.model,
                     "mode": v.get("permissionMode"),
+                    // What `/` can run here: built-ins, skills, project and plugin commands.
+                    "commands": slash_commands(&v),
+                    // Claude's auto-memory folder for this project.
+                    "memoryDir": v.pointer("/memory_paths/auto").and_then(Value::as_str).filter(|p| p.starts_with('/')),
                 })]
             }
             "control_request" => {
@@ -492,6 +885,10 @@ impl Parser {
                     self.replies.push(control_error(&id, &format!("ClaudeSurf does not handle {subtype} requests")));
                     vec![]
                 }
+            }
+            "control_response" => {
+                let id = v.pointer("/response/request_id").and_then(Value::as_str).unwrap_or("");
+                if id.starts_with("rewind:") { vec![rewind_event(id, &v)] } else { vec![] }
             }
             "control_cancel_request" => {
                 let id = v.get("request_id").and_then(Value::as_str).unwrap_or("");
@@ -682,7 +1079,7 @@ pub fn record(transcript: &mut Vec<Value>, ev: Value, max: usize) {
             }
         }
     }
-    if matches!(ev["k"].as_str(), Some("status" | "log" | "permission" | "question")) {
+    if matches!(ev["k"].as_str(), Some("status" | "log" | "permission" | "question" | "rewind")) {
         return;
     }
     transcript.push(ev);
@@ -695,6 +1092,128 @@ pub fn record(transcript: &mut Vec<Value>, ev: Value, max: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_locations() {
+        let mut p = Parser::default();
+        let init = json!({ "type": "system", "subtype": "init", "memory_paths": { "auto": "/Users/a/.claude/projects/-p/memory/" } });
+        let ev = p.feed(&init.to_string());
+        assert_eq!(ev[0]["memoryDir"], "/Users/a/.claude/projects/-p/memory/");
+        assert_eq!(global_claude_md("/Users/a/.claude/projects/-p/memory/").as_deref(), Some("/Users/a/.claude/CLAUDE.md"));
+        assert_eq!(global_claude_md("/elsewhere/memory/"), None);
+        let mut files = vec!["src/CLAUDE.md", ".claude/rules/style.md", "CLAUDE.local.md", "CLAUDE.md", ".claude/CLAUDE.md"];
+        files.sort_by_key(|f| rule_rank(f));
+        assert_eq!(files, ["CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", ".claude/rules/style.md", "src/CLAUDE.md"]);
+    }
+
+    #[test]
+    fn slash_commands_from_init() {
+        let init = json!({ "slash_commands": ["compact", "__remote-workflow", "anthropic-skills:pdf", "bad name"], "skills": ["compact", "deep-research"] });
+        assert_eq!(slash_commands(&init), ["compact", "anthropic-skills:pdf", "deep-research"]);
+        let mut p = Parser::default();
+        let mut init = init.clone();
+        init["type"] = json!("system");
+        init["subtype"] = json!("init");
+        let ev = p.feed(&init.to_string());
+        assert_eq!(ev[0]["commands"][0], "compact");
+    }
+
+    #[test]
+    fn command_files() {
+        let md = "---\ndescription: \"Push the branch\"\nallowed-tools: Bash\n---\nRun git push $ARGUMENTS";
+        assert_eq!(command_info(".claude/commands/git/push.md", md), Some(("git:push".into(), "Push the branch".into())));
+        assert_eq!(command_info(".claude/commands/hi.md", "\n# Say hi\nmore"), Some(("hi".into(), "Say hi".into())));
+        assert_eq!(command_info(".claude/skills/lint/SKILL.md", "---\nname: lint\ndescription: Lint it\n---\nbody").unwrap().0, "lint");
+        assert_eq!(command_info(".claude/skills/a/b/SKILL.md", ""), None);
+        assert_eq!(command_info("src/x.md", ""), None);
+        assert_eq!(command_info(".claude/commands/bad name.md", ""), None);
+    }
+
+    #[test]
+    fn chat_titles() {
+        assert_eq!(chat_title("\n  Fix the   build\nplease"), "Fix the build");
+        assert_eq!(chat_title(""), "Untitled chat");
+        let long = "word ".repeat(30);
+        let t = chat_title(&long);
+        assert!(t.ends_with('…') && t.chars().count() <= 61);
+        let tr = vec![json!({ "k": "init" }), json!({ "k": "user", "t": "Hello there" })];
+        assert_eq!(title_of_transcript(&tr), "Hello there");
+    }
+
+    #[test]
+    fn chat_index_keeps_newest_first_and_drops_oldest() {
+        let mut idx = vec![];
+        assert!(touch_chat(&mut idx, "a", Some("first chat"), None, 1, 2).is_empty());
+        assert!(touch_chat(&mut idx, "b", Some("second"), None, 2, 2).is_empty());
+        // Using "a" again moves it to the top and keeps its title.
+        assert!(touch_chat(&mut idx, "a", Some("more"), Some("sess"), 3, 2).is_empty());
+        assert_eq!(idx[0]["id"], "a");
+        assert_eq!(idx[0]["title"], "first chat");
+        assert_eq!(idx[0]["session"], "sess");
+        assert_eq!(idx[0]["search"], "first chat\nmore");
+        assert_eq!(idx[0]["updated"], 3);
+        assert_eq!(touch_chat(&mut idx, "c", Some("third"), None, 4, 2), ["b"]);
+        assert_eq!(idx.iter().map(|c| c["id"].as_str().unwrap()).collect::<Vec<_>>(), ["c", "a"]);
+        // The search text stays bounded.
+        let big = "x".repeat(CHAT_SEARCH_CHARS * 2);
+        touch_chat(&mut idx, "c", Some(&big), None, 5, 2);
+        assert!(idx[0]["search"].as_str().unwrap().chars().count() <= CHAT_SEARCH_CHARS);
+    }
+
+    #[test]
+    fn mentions_go_into_the_context() {
+        let file = Mention {
+            kind: MentionKind::File,
+            path: "src/a.rs".into(),
+            line: 0,
+            name: String::new(),
+            contents: Some(Ok("fn a() {}".into())),
+        };
+        let big = Mention { path: "big.txt".into(), contents: Some(Err("too large to include".into())), ..file.clone() };
+        let dir = Mention { kind: MentionKind::Dir, path: "src/".into(), contents: None, ..file.clone() };
+        let sym = Mention { kind: MentionKind::Symbol, path: "src/a.rs".into(), line: 3, name: "a".into(), contents: None };
+        let t = with_context("why?", None, &[file, big, dir, sym]);
+        assert!(t.starts_with("<ide_context>\n"));
+        assert!(!t.contains("Active file"));
+        assert!(t.contains("File src/a.rs:\n```\nfn a() {}\n```\n"));
+        assert!(t.contains("File big.txt (too large to include)\n"));
+        assert!(t.contains("Folder src/\n"));
+        assert!(t.contains("Symbol `a` at src/a.rs:3\n"));
+        assert!(t.ends_with("</ide_context>\n\nwhy?"));
+    }
+
+    #[test]
+    fn mentions_from_the_page_are_validated() {
+        let ok = Mention::from_json(&json!({ "kind": "file", "path": "src/lib.rs" })).unwrap();
+        assert_eq!(ok.kind, MentionKind::File);
+        assert_eq!(ok.label(), "src/lib.rs");
+        let sym = Mention::from_json(&json!({ "kind": "symbol", "path": "src/lib.rs", "line": 12, "name": "Foo" })).unwrap();
+        assert_eq!(sym.label(), "Foo (src/lib.rs:12)");
+        for bad in ["/etc/passwd", "../x", "a/../../x", "~/.ssh/id_rsa", "C:/x", "a\\b", ""] {
+            assert!(Mention::from_json(&json!({ "kind": "file", "path": bad })).is_none(), "{bad}");
+        }
+        assert!(Mention::from_json(&json!({ "kind": "exe", "path": "a" })).is_none());
+        assert!(Mention::from_json(&json!({ "kind": "symbol", "path": "a.rs" })).is_none());
+    }
+
+    #[test]
+    fn candidates_include_folders() {
+        let files = vec!["/p/src/lib.rs".to_string(), "/p/src/ui/x.ts".to_string(), "/p/README.md".to_string()];
+        assert_eq!(mention_candidates("/p", &files), ["README.md", "src/", "src/lib.rs", "src/ui/", "src/ui/x.ts"]);
+    }
+
+    #[test]
+    fn fuzzy_ranking_prefers_names() {
+        let c: Vec<String> = ["src/lib.rs", "src/protocol.rs", "web/index.html", "lib/", "docs/library/notes.md"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(rank_mentions(&c, "lib", 2), ["lib/", "src/lib.rs"]);
+        assert_eq!(rank_mentions(&c, "proto", 1), ["src/protocol.rs"]);
+        assert_eq!(rank_mentions(&c, "wix", 1), ["web/index.html"]);
+        assert!(rank_mentions(&c, "zzz", 5).is_empty());
+        assert_eq!(rank_mentions(&c, "", 1), ["lib/"]);
+    }
 
     #[test]
     fn args_are_sanitised() {
@@ -719,21 +1238,97 @@ mod tests {
 
     #[test]
     fn user_message_is_one_json_line() {
-        let m = user_message("hi\n\"there\"");
+        let m = user_message("hi\n\"there\"", None, &[]);
         assert!(m.ends_with('\n'));
         assert_eq!(m.matches('\n').count(), 1);
         let v: Value = serde_json::from_str(m.trim()).unwrap();
         assert_eq!(v["message"]["content"][0]["text"], "hi\n\"there\"");
+        assert!(v.get("uuid").is_none());
+        let u = "baacac03-83fa-4c4a-a331-afd62b65a7e3";
+        let v: Value = serde_json::from_str(user_message("x", Some(u), &[]).trim()).unwrap();
+        assert_eq!(v["uuid"], u);
+    }
+
+    #[test]
+    fn images_go_before_the_text() {
+        let img = Image::from_json(&json!({ "mediaType": "image/png", "data": "iVBORw0KGgo=", "thumb": "data:image/jpeg;base64,/9j/4A==" })).unwrap();
+        assert_eq!(img.thumb.as_deref(), Some("data:image/jpeg;base64,/9j/4A=="));
+        let v: Value = serde_json::from_str(user_message("what is this?", None, &[img]).trim()).unwrap();
+        let c = &v["message"]["content"];
+        assert_eq!(c[0]["type"], "image");
+        assert_eq!(c[0]["source"]["media_type"], "image/png");
+        assert_eq!(c[0]["source"]["data"], "iVBORw0KGgo=");
+        assert_eq!(c[1]["text"], "what is this?");
+    }
+
+    #[test]
+    fn images_from_the_page_are_validated() {
+        assert!(Image::from_json(&json!({ "mediaType": "image/svg+xml", "data": "PHN2Zz4=" })).is_none());
+        assert!(Image::from_json(&json!({ "mediaType": "image/png", "data": "not base64!" })).is_none());
+        assert!(Image::from_json(&json!({ "mediaType": "image/png", "data": "" })).is_none());
+        let big = "A".repeat(MAX_IMAGE_B64 + 1);
+        assert!(Image::from_json(&json!({ "mediaType": "image/png", "data": big })).is_none());
+        // A thumbnail that isn't a plain image data URL is dropped, the image kept.
+        let i = Image::from_json(&json!({ "mediaType": "image/png", "data": "AAAA", "thumb": "javascript:alert(1)" })).unwrap();
+        assert!(i.thumb.is_none());
+        let i = Image::from_json(&json!({ "mediaType": "image/png", "data": "AAAA", "thumb": "data:image/png;base64,AA\"><x" })).unwrap();
+        assert!(i.thumb.is_none());
+    }
+
+    #[test]
+    fn uuids_are_checked() {
+        assert!(is_uuid("baacac03-83fa-4c4a-a331-afd62b65a7e3"));
+        assert!(!is_uuid("baacac03-83fa-4c4a-a331-afd62b65a7e"));
+        assert!(!is_uuid("baacac03-83fa-4c4a-a331-afd62b65a7eZ"));
+        assert!(!is_uuid("x\",\"evil\":\"1"));
+    }
+
+    #[test]
+    fn rewind_round_trip() {
+        let u = "baacac03-83fa-4c4a-a331-afd62b65a7e3";
+        let req: Value = serde_json::from_str(rewind_request(u, true).trim()).unwrap();
+        assert_eq!(req["request"]["subtype"], "rewind_files");
+        assert_eq!(req["request"]["user_message_id"], u);
+        assert_eq!(req["request"]["dry_run"], true);
+        let id = req["request_id"].as_str().unwrap();
+
+        let mut p = Parser::default();
+        let reply = json!({ "type": "control_response", "response": { "subtype": "success", "request_id": id,
+            "response": { "canRewind": true, "filesChanged": ["/p/a.txt"], "insertions": 1, "deletions": 2 } } });
+        let ev = p.feed(&reply.to_string());
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0]["k"], "rewind");
+        assert_eq!(ev[0]["uuid"], u);
+        assert_eq!(ev[0]["dry"], true);
+        assert_eq!(ev[0]["ok"], true);
+        assert_eq!(ev[0]["files"][0], "/p/a.txt");
+
+        let go: Value = serde_json::from_str(rewind_request(u, false).trim()).unwrap();
+        let no = json!({ "type": "control_response", "response": { "subtype": "success", "request_id": go["request_id"],
+            "response": { "canRewind": false, "error": "No file checkpoint found for this message." } } });
+        let ev = p.feed(&no.to_string());
+        assert_eq!(ev[0]["dry"], false);
+        assert_eq!(ev[0]["ok"], false);
+        assert_eq!(ev[0]["error"], "No file checkpoint found for this message.");
+
+        let err = json!({ "type": "control_response", "response": { "subtype": "error", "request_id": go["request_id"], "error": "boom" } });
+        assert_eq!(p.feed(&err.to_string())[0]["error"], "boom");
+        // Other control responses are not ours.
+        let other = json!({ "type": "control_response", "response": { "subtype": "success", "request_id": "x" } });
+        assert!(p.feed(&other.to_string()).is_empty());
+        let mut t = vec![];
+        record(&mut t, ev[0].clone(), 10);
+        assert!(t.is_empty());
     }
 
     #[test]
     fn context_wraps_selection() {
         let ctx = EditorContext { path: "src/a.rs".into(), selection: Some((3, 4, "fn a() {}".into())) };
-        let t = with_context("why?", Some(&ctx));
+        let t = with_context("why?", Some(&ctx), &[]);
         assert!(t.starts_with("<ide_context>\nActive file in the editor: src/a.rs\nSelected lines 3-4:\n```\nfn a() {}\n```"));
         assert!(t.ends_with("</ide_context>\n\nwhy?"));
         assert_eq!(ctx.label(), "src/a.rs:3-4");
-        assert_eq!(with_context("x", None), "x");
+        assert_eq!(with_context("x", None, &[]), "x");
         assert_eq!(relative("/p/src/a.rs", "/p/"), "src/a.rs");
         assert_eq!(relative("/q/a.rs", "/p"), "/q/a.rs");
     }

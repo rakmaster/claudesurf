@@ -15,6 +15,10 @@ chat is a real multi-turn Claude Code session with your project as its working d
 - Tool calls shown inline as cards: file edits as diffs, commands, searches, to-do lists.
   File names open in the editor.
 - The active file and selection attached as context (toggle per message)
+- **@-mentions**: type `@` in the composer to pick a project file, folder or symbol (fuzzy
+  search; ↑/↓ and ⏎ or Tab to pick). A mentioned file's text goes with the message (up to
+  40,000 characters per file, 120,000 together; larger files are named for Claude to read);
+  folders and symbols are passed by path and line
 - Modes:
   - **Chat**: read-only (`plan`)
   - **Edit**: may change files (`acceptEdits`)
@@ -31,9 +35,32 @@ chat is a real multi-turn Claude Code session with your project as its working d
 - Questions from Claude (AskUserQuestion) as a card: click an option (or several, when
   Claude allows it), type your own under **Other**, or **Skip**; the answers go back to Claude
 - Model picker (default / Opus / Sonnet / Haiku, or any model id in Settings)
+- **Memory** (top of the panel): the rules Claude reads for this project (`CLAUDE.md`,
+  `CLAUDE.local.md`, `.claude/CLAUDE.md`, `.claude/rules/`, nested `CLAUDE.md` files), each opening
+  in the editor, plus your global `~/.claude/CLAUDE.md` and Claude's auto memory for the project.
+  **Remember something** asks Claude to add an instruction to the file you choose; with no
+  `CLAUDE.md` yet, the panel offers `/init`
 - **Instructions** (top of the panel): extra text appended to Claude Code's system prompt
+- **History**: every chat is kept per project (the 50 most recent). **History** at the top
+  of the panel lists them with a search box; click one to go back to it (Claude resumes that
+  session), or ✕ to delete it. **＋ New** starts a fresh chat and keeps the old one in history.
+- **Images**: paste (⌘V), drop, or pick (🖼) up to 5 PNG, JPEG, GIF or WebP images to send with
+  a message. Large images are scaled down first (to at most 1568 px, as the model sees them);
+  the chat history keeps only small thumbnails
+- **Slash commands**: type `/` at the start of a message to pick a command: Claude Code's
+  built-ins, your skills and plugin commands, and the project's `.claude/commands` and
+  `.claude/skills` (with their descriptions). The message is sent as typed, so Claude Code
+  runs the command; `/clear` starts a new chat
+- **Queued messages**: keep typing while Claude works; ⏎ queues the message (with its images and
+  @-mentions) above the message box, and it is sent when the turn finishes. Click a queued
+  message to edit it, ✕ to drop it. After Stop or a failed turn the queue waits, with **Send now**
+- **Checkpoints**: hover one of your messages and click **↺ Revert** to restore the files
+  Claude changed since then (Claude Code's own file checkpoints). The panel first lists the
+  files that would change, and you confirm. The chat itself stays; Claude is told about the
+  revert with your next message. Only edits made with Claude's file tools are tracked, not
+  changes made by shell commands, and only for messages sent with ClaudeSurf 0.2.0 or later
 - Conversations resume (`--resume`) after OpenIDEA unloads the idle plugin, or when you
-  switch mode or model
+  switch mode, model or chat
 - Commands: *ClaudeSurf: Open Chat*, *New Chat*, *Ask Claude About Selection*
   (editor context menu, ⌘⇧L / Ctrl+Shift+L)
 
@@ -50,9 +77,9 @@ OpenIDEA asks you to grant these when you install the plugin:
 | Capability | Risk | Why ClaudeSurf needs it |
 | --- | --- | --- |
 | `process:claude` | high | Runs the Claude Code CLI in your project folder; it is the whole chat. Claude Code can read your project and, depending on the mode you pick, edit files (**Edit**) or also run shell commands without asking (**Agent**). In **Chat** mode it is read-only. OpenIDEA pins the grant to the exact `claude` binary, so after Claude Code updates itself you are asked to approve the new binary. |
-| `project.read` | low | Finds the project root (Claude's working directory) and turns file paths into project-relative ones. |
+| `project.read` | low | Finds the project root (Claude's working directory) and turns file paths into project-relative ones; lists files and symbols for the @ picker and reads the files you @-mention. |
 | `editor.read` | low | Reads the active file's path and your selection to attach as context. Nothing is sent unless the context chip is on. |
-| `storage` | low | Keeps the chat transcript and Claude's session id per project, so the chat survives the plugin being unloaded, plus your last mode and your Instructions. |
+| `storage` | low | Keeps each chat's transcript and Claude's session id per project (the chat history, which survives the plugin being unloaded), plus your last mode and your Instructions. |
 | `clipboard` (optional) | medium | The Copy button on code blocks. |
 
 ### Settings and what a project can change

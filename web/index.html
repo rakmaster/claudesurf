@@ -38,7 +38,9 @@
   .top .title { font-weight: 600; color: var(--strong); display: flex; align-items: center; gap: 6px; }
   .top .spacer { flex: 1; }
   .icon-btn { background: none; border: 0; padding: 3px 6px; border-radius: 4px; cursor: pointer; color: var(--muted); }
-  .icon-btn:hover { background: var(--hover); color: var(--fg); }
+  .icon-btn:hover, .icon-btn.on { background: var(--hover); color: var(--fg); }
+  .img-btn { display: grid; place-items: center; padding: 3px 5px; }
+  .ico-img { vertical-align: -2px; }
   .spark { width: 14px; height: 14px; color: var(--claude); }
 
   /* Messages */
@@ -137,7 +139,55 @@
   @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
 
   /* Composer */
-  .composer { margin: 0 8px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--input); }
+  .composer { position: relative; margin: 0 8px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--input); }
+  /* @ picker */
+  .mentions { position: absolute; left: -1px; right: -1px; bottom: calc(100% + 4px); max-height: 260px; overflow-y: auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.25); padding: 3px; z-index: 5; }
+  .mentions .item { display: flex; align-items: baseline; gap: 6px; padding: 2px 6px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+  .mentions .item.on { background: var(--hover); outline: 1px solid var(--accent); }
+  .mentions .ico { flex: none; width: 1.2em; text-align: center; color: var(--muted); }
+  .mentions .nm { color: var(--strong); flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+  .mentions .dt { color: var(--muted); font-size: .88em; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; min-width: 0; }
+  .mentions .none { color: var(--muted); padding: 2px 6px; }
+  .chip.at { color: var(--link); margin-right: 4px; }
+  /* Queued messages */
+  .queue { padding: 6px 8px 0; display: flex; flex-direction: column; gap: 4px; }
+  .queue[hidden] { display: none; }
+  .queue .qhead { font-size: .8em; color: var(--muted); }
+  .queue .qi { display: flex; align-items: center; gap: 6px; border: 1px dashed var(--border); border-radius: 5px; padding: 2px 4px 2px 8px; background: var(--bg2); }
+  .queue .qi .qt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .queue .qi .qt:hover { text-decoration: underline; }
+  .queue .qi .qn { flex: none; font-size: .8em; color: var(--muted); }
+  .queue .qi button { flex: none; background: none; border: 1px solid transparent; border-radius: 4px; padding: 0 5px; cursor: pointer; color: var(--muted); font-size: .85em; }
+  .queue .qi button:hover { border-color: var(--border); color: var(--fg); }
+  .queue .qi .now { color: var(--accent); }
+  body.busy .queue .qi .now { display: none; }
+
+  /* Images */
+  .imgrow { display: flex; gap: 10px; flex-wrap: wrap; padding: 10px 10px 0; }
+  .imgrow[hidden] { display: none; }
+  .imgrow .im { position: relative; width: 56px; height: 56px; flex: none; }
+  .imgrow .im img { width: 100%; height: 100%; object-fit: cover; display: block; border: 1px solid var(--border); border-radius: 5px; background: var(--bg2); }
+  .imgrow .im .rm {
+    position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; padding: 0;
+    display: grid; place-items: center; border-radius: 50%; cursor: pointer;
+    font-size: 12px; line-height: 1; font-weight: 700;
+    background: var(--bg2); color: var(--fg); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,.35);
+  }
+  .imgrow .im .rm:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .imgrow .im.busy { opacity: .5; }
+  .composer.drop { border-color: var(--accent); border-style: dashed; }
+  .msg.user .thumbs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+  .msg.user .thumbs img { max-width: 120px; max-height: 90px; border-radius: 4px; border: 1px solid var(--border); display: block; }
+  .msg.user .thumbs .gone { font: .85em var(--mono); color: var(--muted); }
+  /* Checkpoints */
+  .msg.user { position: relative; }
+  .msg.user .revert { position: absolute; top: 2px; right: 4px; visibility: hidden; font-size: .85em; padding: 0 6px; background: var(--bg2); }
+  .msg.user:hover .revert { visibility: visible; }
+  body.busy .msg.user .revert { display: none; }
+  .perm.rewind { border-color: var(--danger); }
+  .perm.rewind ul { margin: 4px 0 0; padding-left: 18px; font: .9em/1.4 var(--mono); max-height: 160px; overflow: auto; }
+  .perm .btns .danger { background: var(--danger); color: var(--on-accent); border-color: var(--danger); }
+  .note.reverted::before { content: "↺ "; color: var(--accent); }
   .composer:focus-within { border-color: var(--openidea-focus-ring, var(--accent)); }
   .ctxrow { display: flex; align-items: center; gap: 6px; padding: 6px 8px 0; flex-wrap: wrap; }
   .ctx { display: inline-flex; align-items: center; gap: 4px; font: .85em var(--mono); border: 1px solid var(--border); border-radius: 4px; padding: 0 2px 0 6px; max-width: 100%; }
@@ -156,6 +206,40 @@
   .send:disabled { opacity: .4; cursor: default; }
   .send.stop { background: var(--danger); }
   select.agent { border-color: var(--warning); color: var(--warning); }
+
+  /* Chat history */
+  .history { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 8px; }
+  .history[hidden] { display: none; }
+  .history .hhead { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .history .hhead b { color: var(--strong); flex: 1; }
+  .history input { width: 100%; font: inherit; color: var(--fg); background: var(--input); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; margin-bottom: 6px; }
+  .history input:focus { outline: none; border-color: var(--openidea-focus-ring, var(--accent)); }
+  .history .list { flex: 1; overflow-y: auto; }
+  .history .chat { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px; cursor: pointer; border: 1px solid transparent; }
+  .history .chat:hover { background: var(--hover); }
+  .history .chat.cur { border-color: var(--border); }
+  .history .chat .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history .chat.cur .t::before { content: "● "; color: var(--accent); }
+  .history .chat .when { flex: none; font-size: .85em; color: var(--muted); }
+  .history .chat .del { visibility: hidden; flex: none; }
+  .history .chat:hover .del { visibility: visible; }
+  .history .chat .del:hover { color: var(--danger); }
+  .history .none { color: var(--muted); text-align: center; margin-top: 20px; }
+  body.show-history #log, body.show-history .status, body.show-memory #log, body.show-memory .status { display: none; }
+  /* Rules & memory */
+  .memory .msec { font-size: .8em; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 0 4px; }
+  .memory .msec:first-child { margin-top: 0; }
+  .memory .chat { align-items: baseline; }
+  .memory .chat .p { flex: none; font-family: var(--mono); color: var(--link); max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .memory .chat .t { color: var(--muted); }
+  .memory .hint { font-size: .85em; color: var(--muted); margin: 2px 6px 6px; }
+  .memory .add { border: 1px solid var(--border); border-radius: 6px; padding: 6px; background: var(--bg2); }
+  .memory .add textarea { border: 1px solid var(--border); border-radius: 4px; background: var(--input); min-height: 54px; max-height: 30vh; resize: vertical; }
+  .memory .add .row { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+  .memory .add select { max-width: none; flex: 1; min-width: 0; }
+  .memory .add button, .memory .mk { border: 1px solid var(--accent); border-radius: 5px; padding: 2px 10px; cursor: pointer; background: var(--accent); color: var(--on-accent); }
+  .memory .add button:disabled { opacity: .5; cursor: default; }
+  .memory .mk { margin: 2px 6px 6px; }
 
   /* Instructions (system prompt) editor */
   .instr { margin: 0 8px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); padding: 6px 8px; }
@@ -176,10 +260,21 @@
       Claude
     </div>
     <div class="spacer"></div>
+    <button class="icon-btn" id="histBtn" title="Past chats in this project">History</button>
+    <button class="icon-btn" id="memBtn" title="Rules and memory Claude reads (CLAUDE.md files)">Memory</button>
     <button class="icon-btn" id="instrBtn" title="Extra instructions appended to Claude Code's system prompt">Instructions</button>
     <button class="icon-btn" id="newBtn" title="New chat">＋ New</button>
   </div>
 
+  <div class="history" id="history" hidden>
+    <div class="hhead"><b>Chats in this project</b><button class="icon-btn" id="histClose" title="Back to the chat (Esc)">✕</button></div>
+    <input id="histSearch" type="search" placeholder="Search chats…" spellcheck="false">
+    <div class="list" id="histList"></div>
+  </div>
+  <div class="history memory" id="memory" hidden>
+    <div class="hhead"><b>Rules &amp; memory</b><button class="icon-btn" id="memClose" title="Back to the chat (Esc)">✕</button></div>
+    <div class="list" id="memList"></div>
+  </div>
   <div id="log"></div>
   <div class="status" id="status"></div>
 
@@ -195,11 +290,22 @@
   </div>
 
   <div class="composer">
+    <div class="mentions" id="mentions" role="listbox" hidden></div>
     <div class="ctxrow" id="ctxrow" hidden>
       <span class="ctx" id="ctx" title="Sent with your message as context"><span id="ctxLabel"></span><button id="ctxToggle" title="Don't attach">✕</button></span>
     </div>
-    <textarea id="input" rows="2" placeholder="Ask Claude anything — ⏎ to send, ⇧⏎ for a new line"></textarea>
+    <div class="queue" id="queue" hidden></div>
+    <div class="imgrow" id="imgrow" hidden></div>
+    <textarea id="input" rows="2" placeholder="Ask Claude anything — / for commands, @ to mention a file, paste an image"></textarea>
+    <input type="file" id="imgFile" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
     <div class="controls">
+      <button class="icon-btn img-btn" id="imgBtn" title="Attach images (or paste / drop them here)" aria-label="Attach images">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round">
+          <rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/>
+          <circle cx="5.5" cy="6" r="1.3"/>
+          <path d="M1.8 12.2l4-4 3 3 2-2 3.4 3.4"/>
+        </svg>
+      </button>
       <select id="mode" title="What Claude may do. Each panel starts in your last mode other than Agent; Agent is chosen here, each time.">
         <option value="plan">Chat — read-only</option>
         <option value="acceptEdits">Edit — changes files</option>
@@ -229,10 +335,14 @@
   const bridge = window.openidea || { postMessage() {}, onMessage() {} };
   const post = (o) => bridge.postMessage(JSON.stringify(o));
   // Must equal PAGE_REV in src/lib.rs.
-  const REV = 5;
+  const REV = 16;
 
   let instructions = "";
   let busy = false, polling = false, ctxLabel = null, ctxOn = true, root = "";
+  // The plugin's messages reach the panel in every open window: this panel takes
+  // the hello that answers its own nonce, then only messages for its project.
+  const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  let joined = false;
   let current = null;            // { el, text } of the streaming assistant message
   const tools = new Map();       // tool_use id -> status element
   const prompts = new Map();     // permission request id -> card
@@ -240,6 +350,8 @@
   // ---------- helpers ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+  // The picture icon (same drawing as the attach button), in the text colour.
+  const IMG_ICON = '<svg class="ico-img" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><circle cx="5.5" cy="6" r="1.3"/><path d="M1.8 12.2l4-4 3 3 2-2 3.4 3.4"/></svg>';
   const atBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   const scroll = (force) => { if (force || stick) log.scrollTop = log.scrollHeight; };
   let stick = true;
@@ -340,7 +452,7 @@
     const e = el("div", "empty", `
       <svg class="spark" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0l1.6 5.2L15 6.4l-4.3 2.9L12.3 15 8 11.6 3.7 15l1.6-5.7L1 6.4l5.4-1.2z"/></svg>
       <h2>Ask Claude</h2>
-      <div>Claude Code works in this project with the file you have open as context.</div>`);
+      <div>Claude Code works in this project with the file you have open as context. Type @ to mention a file.</div>`);
     const s = el("div", "suggest");
     ["Explain the open file", "Find possible bugs in my selection", "Write tests for the open file", "Summarize this project's structure"].forEach((t) => {
       const b = el("button", null, esc(t));
@@ -350,10 +462,30 @@
     e.appendChild(s);
     log.appendChild(e);
   }
-  function addUser(text, context) {
+  function addUser(text, context, mentioned, uuid, images) {
     clearEmpty(); endText();
     const m = el("div", "msg user");
+    if (uuid) {
+      const b = el("button", "icon-btn revert", "↺ Revert");
+      b.title = "Restore the files Claude changed since this message (edits made with Claude's file tools; not shell commands)";
+      b.dataset.uuid = uuid;
+      m.appendChild(b);
+    }
     if (context) m.appendChild(el("div", "chip", "📎 " + esc(context)));
+    if (Array.isArray(mentioned) && mentioned.length) {
+      const row = el("div");
+      mentioned.forEach((l) => row.appendChild(el("span", "chip at", "@ " + esc(l))));
+      m.appendChild(row);
+    }
+    if (Array.isArray(images) && images.length) {
+      const row = el("div", "thumbs");
+      images.forEach((src) => {
+        if (typeof src === "string" && /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(src)) {
+          const img = el("img"); img.src = src; img.alt = "image"; row.appendChild(img);
+        } else row.appendChild(el("span", "gone", IMG_ICON + " image"));
+      });
+      m.appendChild(row);
+    }
     m.appendChild(document.createTextNode(text));
     log.appendChild(m);
     scroll(true);
@@ -562,9 +694,12 @@
   }
   function apply(ev, replay) {
     switch (ev.k) {
-      case "user": addUser(ev.t, ev.context); break;
+      case "user": addUser(ev.t, ev.context, ev.mentions, ev.uuid, ev.images); break;
+      case "rewind": if (!replay) rewindResult(ev); break;
+      case "reverted": note(ev.t || "Files restored.", "reverted"); break;
       case "init":
         if (ev.model) $("footL").textContent = ev.model;
+        if (!replay && Array.isArray(ev.commands) && ev.commands.length) commandNames = ev.commands.filter((c) => typeof c === "string");
         break;
       case "text": textDelta(ev.t || ""); break;
       case "block_end": endText(); break;
@@ -574,8 +709,8 @@
       case "question": if (!replay) addQuestion(ev); break;
       case "permission_done": promptDone(ev); break;
       case "status": if (!replay) setStatus(ev.t); break;
-      case "done": done(ev); break;
-      case "error": note(ev.t, "error"); break;
+      case "done": if (!replay) turnOk = !ev.error; done(ev); break;
+      case "error": if (!replay) turnOk = false; note(ev.t, "error"); break;
       case "log": note(ev.t); break;
     }
   }
@@ -584,21 +719,37 @@
   function setStatus(t) {
     statusEl.innerHTML = t ? `<span class="dots">${esc(t)}</span>` : "";
   }
+  const PLACEHOLDER = input.placeholder;
   function setBusy(b) {
+    const was = busy;
     busy = b;
-    sendBtn.classList.toggle("stop", b);
-    sendBtn.title = b ? "Stop" : "Send (⏎)";
-    sendBtn.innerHTML = b
-      ? '<svg width="12" height="12" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor"/></svg>'
-      : '<svg width="14" height="14" viewBox="0 0 16 16"><path fill="currentColor" d="M8 2l5 5-1.1 1.1L8.8 5V14H7.2V5L4.1 8.1 3 7z"/></svg>';
+    document.body.classList.toggle("busy", b);
+    input.placeholder = b ? "Claude is working — ⏎ queues your next message, Esc stops" : PLACEHOLDER;
     if (b) { if (!statusEl.textContent) setStatus("Working"); startPolling(); }
     else {
       setStatus(""); endText();
       prompts.forEach((_, id) => promptDone({ id, t: "Not answered" }));
+      // A revert that ended without an answer (stopped, or Claude Code exited).
+      reverting.forEach((finish) => finish("Not confirmed — check the files", false));
+      reverting.clear();
+      if (was) turnEnded();
     }
     update();
   }
-  function update() { sendBtn.disabled = !busy && !input.value.trim(); }
+  const STOP_SVG = '<svg width="12" height="12" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor"/></svg>';
+  const SEND_SVG = '<svg width="14" height="14" viewBox="0 0 16 16"><path fill="currentColor" d="M8 2l5 5-1.1 1.1L8.8 5V14H7.2V5L4.1 8.1 3 7z"/></svg>';
+  let sendState = "";
+  // The send button: Send, Queue (while Claude works and there's something to send), or Stop.
+  function update() {
+    const content = !!(input.value.trim() || attached.length);
+    const state = busy ? (content ? "queue" : "stop") : "send";
+    sendBtn.disabled = state === "send" && !content;
+    if (state === sendState) return;
+    sendState = state;
+    sendBtn.classList.toggle("stop", state === "stop");
+    sendBtn.title = state === "stop" ? "Stop (Esc)" : state === "queue" ? "Queue — sent when Claude finishes (⏎)" : "Send (⏎)";
+    sendBtn.innerHTML = state === "stop" ? STOP_SVG : SEND_SVG;
+  }
   function setContext(label) {
     ctxLabel = label || null;
     $("ctxrow").hidden = !ctxLabel;
@@ -617,20 +768,492 @@
     watchdog = setTimeout(() => { if (polling) { polling = false; if (busy) startPolling(); } }, 15000);
   }
 
-  function send() {
-    if (busy) { post({ op: "stop" }); return; }
+  // ---------- @ mentions ----------
+  const picker = $("mentions");
+  const picked = new Map();      // "@token" in the text -> { kind, path, line, name }
+  let mOpen = false, mStart = -1, mItems = [], mSel = 0, mSeq = 0, mTimer = 0, mSlash = false;
+  // Slash commands: names Claude Code reports, the project's command files, and
+  // descriptions for common built-ins (Claude Code only lists names).
+  let commandNames = [], commandInfo = {};
+  const BUILTIN_COMMANDS = {
+    clear: "Start a new chat (same as ＋ New)",
+    compact: "Summarize the conversation so far, to free up context",
+    context: "Show what is using the context window",
+    init: "Write a CLAUDE.md that describes this project",
+    "code-review": "Review the current changes for bugs",
+    "security-review": "Review the pending changes for security issues",
+    simplify: "Clean up the changed code",
+    usage: "Show your plan's usage",
+  };
+  function slashItems(q) {
+    q = q.toLowerCase();
+    const names = [...new Set([...Object.keys(commandInfo), ...commandNames, ...Object.keys(BUILTIN_COMMANDS)])];
+    const scored = [];
+    names.forEach((name) => {
+      const n = name.toLowerCase(), desc = commandInfo[name] || BUILTIN_COMMANDS[name] || "";
+      const tail = n.slice(n.lastIndexOf(":") + 1);
+      const score = !q ? 1 : n.startsWith(q) ? 4 : tail.startsWith(q) ? 3 : n.includes(q) ? 2 : desc.toLowerCase().includes(q) ? 1 : 0;
+      if (score) scored.push({ kind: "cmd", name, detail: desc, score, own: name in commandInfo });
+    });
+    scored.sort((a, b) => b.score - a.score || b.own - a.own || a.name.localeCompare(b.name));
+    return scored.slice(0, 50);
+  }
+  const base = (p) => { const t = p.replace(/\/$/, ""); return t.slice(t.lastIndexOf("/") + 1); };
+  const parent = (p) => { const t = p.replace(/\/$/, ""); const i = t.lastIndexOf("/"); return i < 0 ? "" : t.slice(0, i + 1); };
+  const tokenOf = (it) => "@" + (it.kind === "symbol" ? it.name : it.path);
+  const labelOf = (it) => it.kind === "symbol" ? `${it.name} (${it.path}:${it.line})` : it.path;
+  // The @word being typed at the caret, if any.
+  function mentionQuery() {
+    if (input.selectionStart !== input.selectionEnd) return null;
+    const before = input.value.slice(0, input.selectionStart);
+    // A command name at the very start of the message.
+    const s = before.match(/^\/([^\s]*)$/);
+    if (s) return { start: 0, q: s[1], slash: true };
+    const m = before.match(/(^|\s)@([^\s@]*)$/);
+    return m ? { start: before.length - m[2].length - 1, q: m[2] } : null;
+  }
+  function closePicker() { mOpen = false; mSlash = false; mStart = -1; mItems = []; picker.hidden = true; clearTimeout(mTimer); }
+  function checkMention() {
+    const m = mentionQuery();
+    if (!m) { if (mOpen) closePicker(); return; }
+    if (m.slash) {
+      // Filtered here: the list is already in the page.
+      clearTimeout(mTimer);
+      if (!mOpen || !mSlash) mSel = 0;
+      mOpen = true; mSlash = true; mStart = 0;
+      mItems = slashItems(m.q);
+      mSel = Math.min(mSel, Math.max(0, mItems.length - 1));
+      picker.hidden = false;
+      renderPicker();
+      return;
+    }
+    const fresh = !mOpen || mSlash;
+    mOpen = true; mSlash = false; mStart = m.start;
+    if (fresh) { mItems = []; mSel = 0; picker.innerHTML = '<div class="none">Searching…</div>'; picker.hidden = false; }
+    clearTimeout(mTimer);
+    mTimer = setTimeout(() => post({ op: "mention", q: m.q, seq: ++mSeq, fresh }), fresh ? 0 : 70);
+  }
+  function renderPicker() {
+    picker.innerHTML = "";
+    if (!mItems.length) {
+      picker.appendChild(el("div", "none", mSlash
+        ? (commandNames.length ? "No matching commands" : "No matching commands (Claude Code lists all of them after your first message)")
+        : "No matching files or symbols"));
+      return;
+    }
+    mItems.forEach((it, i) => {
+      const row = el("div", "item" + (i === mSel ? " on" : ""));
+      row.setAttribute("role", "option");
+      if (it.kind === "cmd") {
+        row.innerHTML = `<span class="ico">/</span><span class="nm">${esc(it.name)}</span><span class="dt">${esc(it.detail || "")}</span>`;
+        row.title = "/" + it.name + (it.detail ? " — " + it.detail : "");
+        row.querySelector(".dt").style.direction = "ltr";
+        row.onmousedown = (e) => { e.preventDefault(); choose(i); };
+        picker.appendChild(row);
+        return;
+      }
+      const ico = it.kind === "dir" ? "📁" : it.kind === "file" ? "📄" : /method|function|constructor/.test(it.detail || "") ? "ƒ" : "◆";
+      const name = it.kind === "symbol" ? it.name : base(it.path) + (it.kind === "dir" ? "/" : "");
+      const detail = it.kind === "symbol"
+        ? [it.detail, it.container, `${it.path}:${it.line}`].filter(Boolean).join(" · ")
+        : parent(it.path);
+      row.innerHTML = `<span class="ico">${ico}</span><span class="nm">${esc(name)}</span><span class="dt">‎${esc(detail)}‎</span>`;
+      row.title = labelOf(it);
+      row.onmousedown = (e) => { e.preventDefault(); choose(i); };
+      picker.appendChild(row);
+    });
+    const on = picker.querySelector(".on");
+    if (on) on.scrollIntoView({ block: "nearest" });
+  }
+  function choose(i) {
+    const it = mItems[i];
+    if (!it || mStart < 0) return;
+    if (it.kind === "cmd") {
+      const after = input.value.slice(input.selectionStart).replace(/^\S*/, "");
+      const insert = "/" + it.name + (/^\s/.test(after) ? "" : " ");
+      input.value = insert + after;
+      input.setSelectionRange(insert.length, insert.length);
+      closePicker(); autosize(); update(); input.focus();
+      return;
+    }
+    const token = tokenOf(it);
+    const v = input.value, end = input.selectionStart;
+    const after = v.slice(end);
+    const insert = token + (/^\s/.test(after) ? "" : " ");
+    input.value = v.slice(0, mStart) + insert + after;
+    const caret = mStart + insert.length;
+    input.setSelectionRange(caret, caret);
+    picked.set(token, { kind: it.kind, path: it.path, line: it.line || 0, name: it.name || "" });
+    closePicker(); autosize(); update(); input.focus();
+  }
+  // The picked mentions whose @token is still in the text.
+  function mentionsIn(text) {
+    const out = [];
+    picked.forEach((m, token) => {
+      const re = new RegExp("(^|\\s)" + token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?=$|[\\s,.;:!?)])");
+      if (re.test(text)) out.push(m);
+    });
+    return out;
+  }
+
+  // ---------- checkpoints ----------
+  const newUuid = () => (crypto.randomUUID ? crypto.randomUUID()
+    : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
+  function askRewind(uuid) {
+    if (busy) return;
+    post({ op: "rewind", uuid, dry: true });
+  }
+  const reverting = new Map();   // message uuid -> sets the label on its Revert card
+  function rewindResult(ev) {
+    if (!ev.dry && reverting.has(ev.uuid)) {
+      reverting.get(ev.uuid)(ev.ok ? "✓ Reverted" : "Failed", !!ev.ok);
+      reverting.delete(ev.uuid);
+    }
+    if (!ev.ok) {
+      const e = String(ev.error || "");
+      note(/no file checkpoint/i.test(e)
+        ? "Nothing to revert for this message: Claude hasn't changed files with its file tools since then, or the message is from before checkpoints were on."
+        : "Couldn't revert: " + (e || "Claude Code refused."), "error");
+      return;
+    }
+    if (!ev.dry) return;   // the "reverted" note follows
+    const files = Array.isArray(ev.files) ? ev.files : [];
+    if (!files.length) { note("No files changed since this message, so there's nothing to revert."); return; }
+    clearEmpty(); endText();
+    const c = el("div", "perm rewind");
+    const stats = [ev.insertions != null ? `+${ev.insertions}` : "", ev.deletions != null ? `−${ev.deletions}` : ""].filter(Boolean).join(" ");
+    c.appendChild(el("div", "head", `<b>Revert ${files.length === 1 ? "1 file" : files.length + " files"}</b><span class="ttl">${esc(stats)}</span>`));
+    c.appendChild(el("div", "why", "Restores them to how they were before this message. The chat itself stays as it is. Changes made by shell commands aren't tracked."));
+    const ul = el("ul");
+    files.forEach((f) => ul.appendChild(el("li", null, `<span class="file-link" data-path="${esc(f)}">${esc(f)}</span>`)));
+    c.appendChild(ul);
+    const btns = el("div", "btns");
+    const go = el("button", "danger", "Revert files");
+    const cancel = el("button", null, "Cancel");
+    const finish = (label, ok) => {
+      c.classList.add("answered");
+      let res = c.querySelector(".head .res");
+      if (!res) { res = el("span"); c.querySelector(".head").appendChild(res); }
+      res.className = "res " + (ok ? "ok" : "no");
+      res.textContent = label;
+    };
+    go.onclick = () => {
+      if (busy) return;
+      finish("Reverting…", true);
+      reverting.set(ev.uuid, finish);
+      post({ op: "rewind", uuid: ev.uuid, dry: false });
+    };
+    cancel.onclick = () => finish("Cancelled", false);
+    btns.append(go, cancel);
+    c.appendChild(btns);
+    log.appendChild(c);
+    scroll(true);
+    go.focus({ preventScroll: true });
+  }
+
+  // ---------- images ----------
+  // A message to the plugin is at most ~2M characters (the IDE's bridge limit), so
+  // each image is kept under MAX_B64 and a message's images under TOTAL_B64.
+  const MAX_IMAGES = 5, MAX_EDGE = 1568, THUMB_EDGE = 120, MAX_B64 = 900_000, TOTAL_B64 = 1_800_000;
+  const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+  const attached = [];           // { mediaType, data, thumb } ready to send; { pending } while loading
+  const imgrow = $("imgrow");
+  const loadImage = (src) => new Promise((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = fail; i.src = src; });
+  const readUrl = (file) => new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = fail; r.readAsDataURL(file); });
+  // Draws `img` with its long edge at most `edge`; PNG keeps transparency, else JPEG.
+  function scaled(img, edge, type) {
+    const k = Math.min(1, edge / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL(type, 0.85);
+  }
+  async function addImageFile(file) {
+    if (!file || !IMAGE_TYPES.includes(file.type)) { note(`Can't attach ${file && file.name ? file.name : "that"}: only PNG, JPEG, GIF and WebP images.`, "warn"); return; }
+    if (attached.length >= MAX_IMAGES) { note(`At most ${MAX_IMAGES} images per message.`, "warn"); return; }
+    const slot = { pending: true };
+    attached.push(slot); renderImages();
+    try {
+      const url = await readUrl(file);
+      const img = await loadImage(url);
+      const big = Math.max(img.naturalWidth, img.naturalHeight) > MAX_EDGE;
+      // GIFs and small images go as they are; large ones are scaled down (as the model would).
+      let out = url, type = file.type;
+      if (big || url.length > MAX_B64) {
+        type = file.type === "image/png" ? "image/png" : "image/jpeg";
+        out = scaled(img, MAX_EDGE, type);
+        // Still too large (a big photo saved as PNG): smaller JPEGs until it fits.
+        for (const edge of [MAX_EDGE, 1200, 900, 640]) {
+          if (out.length <= MAX_B64) break;
+          type = "image/jpeg"; out = scaled(img, edge, type);
+        }
+      }
+      const data = out.slice(out.indexOf(",") + 1);
+      if (data.length > MAX_B64) throw new Error("too large");
+      Object.assign(slot, { pending: false, mediaType: type, data, thumb: scaled(img, THUMB_EDGE, "image/jpeg") });
+    } catch {
+      attached.splice(attached.indexOf(slot), 1);
+      note(`Couldn't read ${file.name || "the image"}.`, "warn");
+    }
+    renderImages();
+  }
+  function renderImages() {
+    imgrow.innerHTML = "";
+    imgrow.hidden = !attached.length;
+    attached.forEach((a, i) => {
+      const box = el("div", "im" + (a.pending ? " busy" : ""));
+      if (a.thumb) { const img = el("img"); img.src = a.thumb; img.alt = "attached image"; box.appendChild(img); }
+      const x = el("button", "rm", "✕");
+      x.type = "button";
+      x.title = "Remove this image";
+      x.setAttribute("aria-label", "Remove image");
+      x.onclick = () => { attached.splice(i, 1); renderImages(); input.focus(); };
+      box.appendChild(x);
+      imgrow.appendChild(box);
+    });
+    update();
+  }
+  const imageFiles = (list) => [...(list || [])].filter((f) => f.kind ? f.kind === "file" && f.type.startsWith("image/") : f.type.startsWith("image/"));
+  input.addEventListener("paste", (e) => {
+    const items = imageFiles(e.clipboardData && e.clipboardData.items);
+    if (!items.length) return;
+    e.preventDefault();
+    items.forEach((it) => addImageFile(it.getAsFile()));
+  });
+  const composer = document.querySelector(".composer");
+  composer.addEventListener("dragover", (e) => {
+    if ([...(e.dataTransfer?.types || [])].includes("Files")) { e.preventDefault(); composer.classList.add("drop"); }
+  });
+  composer.addEventListener("dragleave", (e) => { if (!composer.contains(e.relatedTarget)) composer.classList.remove("drop"); });
+  composer.addEventListener("drop", (e) => {
+    composer.classList.remove("drop");
+    const files = imageFiles(e.dataTransfer && e.dataTransfer.files);
+    if (!files.length) return;
+    e.preventDefault();
+    files.forEach(addImageFile);
+    input.focus();
+  });
+  $("imgBtn").onclick = () => $("imgFile").click();
+  $("imgFile").onchange = (e) => { [...e.target.files].forEach(addImageFile); e.target.value = ""; input.focus(); };
+
+  // ---------- sending and the queue ----------
+  const queue = [];              // messages typed while Claude works: { text, images, mentions, ctx }
+  let stopped = false, turnOk = true;
+  function stop() { stopped = true; post({ op: "stop" }); }
+  // Takes what's in the composer (text, images, picked mentions) and empties it.
+  function takeComposer() {
+    if (attached.some((a) => a.pending)) { setStatus("Preparing images"); setTimeout(() => { setStatus(busy ? "Working" : ""); send(); }, 300); return null; }
     const text = input.value.trim();
-    if (!text) return;
-    addUser(text, ctxOn ? ctxLabel : null);
-    input.value = ""; autosize(); update();
-    stick = true;
+    const images = attached.map(({ mediaType, data, thumb }) => ({ mediaType, data, thumb }));
+    if (!text && !images.length) return null;
+    if (images.reduce((n, i) => n + i.data.length, 0) > TOTAL_B64) {
+      note("These images are too large to send together. Remove one and send again.", "warn");
+      return null;
+    }
+    const msg = { text, images, mentions: mentionsIn(text), ctx: ctxOn };
+    input.value = ""; autosize(); closePicker(); picked.clear();
+    attached.length = 0; renderImages();
+    return msg;
+  }
+  function dispatch(msg) {
+    const { text, images, mentions } = msg;
+    // /clear here means a new chat (the old one stays in History).
+    if (text === "/clear" && !images.length) { showHistory(false); post({ op: "new" }); return; }
+    const uuid = newUuid();
+    addUser(text || (images.length === 1 ? "(image)" : "(images)"), msg.ctx ? ctxLabel : null, mentions.map(labelOf), uuid, images.map((i) => i.thumb));
+    stick = true; stopped = false; turnOk = true;
     setStatus("Starting");
-    post({ op: "send", text, ctx: ctxOn, mode: modeSel.value, model: modelSel.value, rev: REV });
+    post({ op: "send", text, images, ctx: msg.ctx, mentions, mode: modeSel.value, model: modelSel.value, rev: REV, now: Date.now(), uuid });
+  }
+  function send() {
+    if (busy && !input.value.trim() && !attached.length) { stop(); return; }
+    const msg = takeComposer();
+    if (!msg) return;
+    if (busy) { queue.push(msg); renderQueue(); return; }
+    dispatch(msg);
+  }
+  // A turn finished: the next queued message goes, unless the person stopped it or it failed.
+  function turnEnded() {
+    if (!queue.length) return;
+    if (stopped || !turnOk) { renderQueue(); return; }
+    setTimeout(() => { if (!busy && queue.length) { dispatch(queue.shift()); renderQueue(); } }, 400);
+  }
+  function renderQueue() {
+    const box = $("queue");
+    box.innerHTML = "";
+    box.hidden = !queue.length;
+    if (!queue.length) return;
+    const held = !busy && (stopped || !turnOk);
+    box.appendChild(el("div", "qhead", held
+      ? "Queued — not sent because the last turn was stopped or failed"
+      : `Queued — sent when Claude finishes (${queue.length})`));
+    queue.forEach((q, i) => {
+      const row = el("div", "qi");
+      const label = q.text || (q.images.length === 1 ? "(image)" : "(images)");
+      const t = el("span", "qt", esc(label));
+      t.title = "Edit (moves it back into the message box)";
+      t.onclick = () => {
+        if (input.value.trim() || attached.length) { note("Send or clear the message box first, then edit the queued message.", "warn"); return; }
+        queue.splice(i, 1);
+        input.value = q.text; attached.push(...q.images.map((im) => ({ pending: false, ...im })));
+        q.mentions.forEach((m) => picked.set(tokenOf(m), m));
+        renderImages(); renderQueue(); autosize(); update(); input.focus();
+      };
+      row.appendChild(t);
+      if (q.images.length) row.appendChild(el("span", "qn", IMG_ICON + " " + q.images.length));
+      const now = el("button", "now", "Send now");
+      now.onclick = () => { if (busy) return; queue.splice(i, 1); renderQueue(); dispatch(q); };
+      const x = el("button", null, "✕");
+      x.title = "Remove from the queue";
+      x.onclick = () => { queue.splice(i, 1); renderQueue(); };
+      row.append(now, x);
+      box.appendChild(row);
+    });
+  }
+
+  // ---------- chat history ----------
+  const hist = $("history"), histList = $("histList"), histSearch = $("histSearch");
+  let chats = null;
+  function ago(ms) {
+    if (!ms) return "";
+    const s = Math.max(0, (Date.now() - ms) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    if (s < 7 * 86400) return Math.floor(s / 86400) + "d ago";
+    return new Date(ms).toLocaleDateString();
+  }
+  function showHistory(on) {
+    if (on) showMemory(false, true);
+    hist.hidden = !on;
+    document.body.classList.toggle("show-history", on);
+    $("histBtn").classList.toggle("on", on);
+    if (on) { chats = null; renderHistory(); post({ op: "chats" }); histSearch.value = ""; histSearch.focus(); }
+    else input.focus();
+  }
+  function renderHistory() {
+    histList.innerHTML = "";
+    if (!chats) { histList.appendChild(el("div", "none", "Loading…")); return; }
+    const words = histSearch.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const shown = chats.filter((c) => {
+      const hay = ((c.title || "") + "\n" + (c.search || "")).toLowerCase();
+      return words.every((w) => hay.includes(w));
+    });
+    if (!shown.length) { histList.appendChild(el("div", "none", chats.length ? "No chats match" : "No chats yet in this project")); return; }
+    shown.forEach((c) => {
+      const row = el("div", "chat" + (c.current ? " cur" : ""));
+      row.title = c.title || "";
+      row.appendChild(el("span", "t", esc(c.title || "Untitled chat")));
+      row.appendChild(el("span", "when", esc(ago(c.updated))));
+      const del = el("button", "icon-btn del", "✕");
+      del.title = "Delete this chat";
+      del.onclick = (e) => {
+        e.stopPropagation();
+        if (busy && c.current) { alert("Stop Claude before deleting the chat it is working in."); return; }
+        if (confirm(`Delete “${c.title || "Untitled chat"}”? This can't be undone.`)) post({ op: "delete_chat", id: c.id });
+      };
+      row.appendChild(del);
+      row.onclick = () => {
+        if (c.current) { showHistory(false); return; }
+        if (busy) { if (!confirm("Stop Claude and switch chats?")) return; stop(); }
+        post({ op: "open_chat", id: c.id });
+      };
+      histList.appendChild(row);
+    });
+  }
+  // ---------- rules & memory ----------
+  const mem = $("memory"), memList = $("memList");
+  let memDraft = "", memTarget = "CLAUDE.md";
+  function showMemory(on, quiet) {
+    if (on) showHistory(false);
+    mem.hidden = !on;
+    document.body.classList.toggle("show-memory", on);
+    $("memBtn").classList.toggle("on", on);
+    if (on) { memList.innerHTML = '<div class="none">Loading…</div>'; post({ op: "memory" }); }
+    else if (!quiet) input.focus();
+  }
+  // Sends a message as if typed (queued while Claude works), without editor context.
+  function sendText(text) {
+    const msg = { text, images: [], mentions: [], ctx: false };
+    if (busy) { queue.push(msg); renderQueue(); } else dispatch(msg);
+  }
+  function openFile(path) {
+    showMemory(false);   // a failure to open is reported in the chat
+    const abs = path.startsWith("/") || !root ? path : root.replace(/\/$/, "") + "/" + path;
+    post({ op: "open", path: abs, line: 0 });
+  }
+  function renderMemory(m) {
+    memList.innerHTML = "";
+    const files = Array.isArray(m.files) ? m.files : [];
+    const row = (p, t, onclick, title) => {
+      const r = el("div", "chat");
+      r.appendChild(el("span", "p", esc(p)));
+      r.appendChild(el("span", "t", esc(t || "")));
+      r.title = title || "Open in the editor";
+      r.onclick = onclick;
+      memList.appendChild(r);
+    };
+    memList.appendChild(el("div", "msec", "This project"));
+    files.forEach((f) => row(f.path, (f.first ? f.first + " · " : "") + f.lines + (f.lines === 1 ? " line" : " lines"), () => openFile(f.path)));
+    if (!files.some((f) => f.path === "CLAUDE.md")) {
+      memList.appendChild(el("div", "hint", files.length
+        ? "No CLAUDE.md at the project root."
+        : "No CLAUDE.md yet. It tells Claude how this project works: commands, conventions, what to avoid."));
+      const mk = el("button", "mk", "Create CLAUDE.md with /init");
+      mk.title = "Claude looks through the project and writes a CLAUDE.md (needs Edit or Agent mode)";
+      mk.onclick = () => { showMemory(false); sendText("/init"); };
+      memList.appendChild(mk);
+    }
+
+    memList.appendChild(el("div", "msec", "Yours"));
+    if (m.global) {
+      row("~/.claude/CLAUDE.md", "Your instructions for all projects", () => openFile(m.global));
+      row("Auto memory", "What Claude has saved about this project", () => openFile(m.auto), m.autoDir || "");
+    } else {
+      memList.appendChild(el("div", "hint", "Send a message first: Claude Code then reports where your global CLAUDE.md and its memory for this project are."));
+    }
+
+    memList.appendChild(el("div", "msec", "Remember something"));
+    const add = el("div", "add");
+    const ta = el("textarea");
+    ta.rows = 2; ta.placeholder = "e.g. Run tests with ./build.sh, not cargo test alone"; ta.value = memDraft;
+    const sel = el("select");
+    [["CLAUDE.md", "This project, for everyone (CLAUDE.md)"],
+     ["CLAUDE.local.md", "This project, just me (CLAUDE.local.md)"],
+     ["~/.claude/CLAUDE.md", "All my projects (~/.claude/CLAUDE.md)"]].forEach(([v, l]) => sel.add(new Option(l, v)));
+    sel.value = memTarget;
+    const go = el("button", null, "Ask Claude to add it");
+    const refresh = () => { go.disabled = !ta.value.trim(); memDraft = ta.value; memTarget = sel.value; };
+    ta.oninput = refresh; sel.onchange = refresh;
+    go.onclick = () => {
+      const what = ta.value.trim();
+      if (!what) return;
+      const file = sel.value;
+      const extra = file === "CLAUDE.local.md" ? " If it's a git repository, make sure CLAUDE.local.md is in .gitignore." : "";
+      memDraft = "";
+      showMemory(false);
+      sendText(`Add this instruction to ${file} (create the file if it doesn't exist). Keep what's already there, put it under a fitting heading, and keep it short:${extra}\n\n${what}`);
+    };
+    ta.onkeydown = (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go.click(); } if (e.key === "Escape") showMemory(false); };
+    const r = el("div", "row"); r.append(sel, go);
+    add.append(ta, r);
+    if (modeSel.value === "plan") add.appendChild(el("div", "hint", "You're in Chat mode, which is read-only: switch to Edit so Claude can change the file."));
+    memList.appendChild(add);
+    refresh();
+  }
+
+  // Shows a chat's saved transcript in the log.
+  function loadTranscript(transcript) {
+    log.innerHTML = ""; tools.clear(); prompts.clear(); picked.clear(); current = null; $("footR").textContent = "";
+    if (transcript && transcript.length) { transcript.forEach((e) => apply(e, true)); endText(); scroll(true); }
+    else showEmpty();
   }
 
   // ---------- messages from the plugin ----------
   bridge.onMessage((raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
+    if (m.k === "hello") { if (m.nonce !== nonce) return; joined = true; }
+    else if (!joined || (typeof m.root === "string" && m.root !== root)) return;
     switch (m.k) {
       case "hello":
         root = m.root || "";
@@ -644,8 +1267,9 @@
         }
         ctxOn = m.includeContext !== false;
         setContext(m.context);
-        if (m.transcript && m.transcript.length) { m.transcript.forEach((e) => apply(e, true)); endText(); scroll(true); }
-        else showEmpty();
+        if (Array.isArray(m.commands)) commandNames = m.commands.filter((c) => typeof c === "string");
+        if (m.commandInfo && typeof m.commandInfo === "object") commandInfo = m.commandInfo;
+        loadTranscript(m.transcript);
         (m.prompts || []).forEach((e) => apply(e, false));
         setBusy(!!m.busy);
         break;
@@ -661,8 +1285,21 @@
         setTimeout(() => location.reload(), 1500);
         break;
       case "reset":
-        tools.clear(); prompts.clear(); current = null; $("footR").textContent = "";
-        showEmpty(); setBusy(false); input.focus();
+        // Queued messages belonged to the chat that was open.
+        queue.length = 0; renderQueue();
+        loadTranscript([]); setBusy(false);
+        if (hist.hidden) input.focus();
+        break;
+      case "load":
+        queue.length = 0; renderQueue();
+        loadTranscript(m.transcript); setBusy(false); showHistory(false);
+        break;
+      case "chats":
+        chats = Array.isArray(m.items) ? m.items : [];
+        if (!hist.hidden) renderHistory();
+        break;
+      case "memory":
+        if (!mem.hidden) renderMemory(m);
         break;
       case "context":
         setContext(m.context);
@@ -676,19 +1313,52 @@
         if (m.context) { ctxOn = true; setContext(m.context); }
         input.focus();
         break;
+      case "mentions":
+        if (!mOpen || mSlash || m.seq !== mSeq) break;
+        mItems = Array.isArray(m.items) ? m.items : [];
+        mSel = 0;
+        renderPicker();
+        break;
     }
   });
 
   // ---------- UI events ----------
   function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, innerHeight * 0.4) + "px"; }
-  input.addEventListener("input", () => { autosize(); update(); });
+  input.addEventListener("input", () => { autosize(); update(); checkMention(); });
+  input.addEventListener("click", checkMention);
+  input.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== input) closePicker(); }, 100));
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (input.value.trim()) send(); }
-    if (e.key === "Escape" && busy) post({ op: "stop" });
+    if (mOpen && !e.isComposing) {
+      if (e.key === "Escape") { e.preventDefault(); closePicker(); return; }
+      if (mItems.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        mSel = (mSel + (e.key === "ArrowDown" ? 1 : mItems.length - 1)) % mItems.length;
+        renderPicker();
+        return;
+      }
+      if (mItems.length && (e.key === "Enter" || e.key === "Tab") && !e.shiftKey) { e.preventDefault(); choose(mSel); return; }
+    }
+    if ((e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") && !e.shiftKey) setTimeout(checkMention, 0);
+    // Backspace in an empty box removes the last attached image.
+    if (e.key === "Backspace" && !input.value && attached.length) { e.preventDefault(); attached.pop(); renderImages(); return; }
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (input.value.trim() || attached.length) send(); }
+    if (e.key === "Escape" && busy) stop();
   });
   input.addEventListener("focus", () => post({ op: "context" }));
   sendBtn.onclick = send;
-  $("newBtn").onclick = () => { if (!busy || confirm("Stop Claude and start a new chat?")) post({ op: "new" }); };
+  $("newBtn").onclick = () => {
+    if (!busy || confirm((queue.length ? "Queued messages will be dropped. " : "") + "Stop Claude and start a new chat?")) { showHistory(false); showMemory(false, true); post({ op: "new" }); }
+  };
+  $("histBtn").onclick = () => showHistory(hist.hidden);
+  $("memBtn").onclick = () => showMemory(mem.hidden);
+  $("memClose").onclick = () => showMemory(false);
+  mem.addEventListener("keydown", (e) => { if (e.key === "Escape") showMemory(false); });
+  $("histClose").onclick = () => showHistory(false);
+  histSearch.addEventListener("input", renderHistory);
+  histSearch.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); showHistory(false); }
+    if (e.key === "Enter") { const first = histList.querySelector(".chat"); if (first) first.click(); }
+  });
   function modeChanged() {
     const agent = modeSel.value === "bypassPermissions";
     modeSel.classList.toggle("agent", agent);
@@ -704,6 +1374,8 @@
   $("instrCancel").onclick = () => { $("instrText").value = instructions; $("instr").hidden = true; };
   $("ctxToggle").onclick = () => { ctxOn = !ctxOn; setContext(ctxLabel); };
   log.addEventListener("click", (e) => {
+    const rev = e.target.closest(".revert");
+    if (rev) { e.preventDefault(); askRewind(rev.dataset.uuid); return; }
     const web = e.target.closest("a[href]");
     if (web) {
       // The frame can't open pages itself; the IDE opens them in the browser.
@@ -729,7 +1401,7 @@
   });
 
   showEmpty();
-  post({ op: "hello" });
+  post({ op: "hello", nonce });
 })();
 </script>
 </body>
